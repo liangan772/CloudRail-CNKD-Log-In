@@ -58,23 +58,47 @@ CNKD 的接口与通用 OAuth2 有几处不一致，插件里逐一处理了：
 
 ## 2. 安装
 
+### 2.1 在服务器上直接 clone（推荐）
+
 ```bash
 cd /var/discourse
-# 将插件放到 plugins 目录
-cp -r discourse-cnkd-login plugins/
+
+# 目录名会决定插件名，请保持 discourse-cnkd-login
+git clone https://github.com/liangan772/CloudRail-CNKD-Log-In.git plugins/discourse-cnkd-login
+
+# 确认 plugin.rb 位置正确（若报 No such file 说明目录多套了一层）
+ls plugins/discourse-cnkd-login/plugin.rb
 
 # 重新构建（插件无额外 gem 依赖，无需修改 Gemfile）
 ./launcher rebuild app
 ```
 
-开发环境（非 Docker）：
+### 2.2 本地下载后上传
 
 ```bash
-cp -r discourse-cnkd-login /path/to/discourse/plugins/
+scp -r discourse-cnkd-login root@<服务器IP>:/tmp/
+# 然后在服务器上：
+cd /var/discourse && mv /tmp/discourse-cnkd-login plugins/
+./launcher rebuild app
+```
+
+### 2.3 开发环境（非 Docker）
+
+```bash
+git clone https://github.com/liangan772/CloudRail-CNKD-Log-In.git \
+  /path/to/discourse/plugins/discourse-cnkd-login
 bin/ember-cli -u
 ```
 
 安装完成后访问 `/admin/plugins` 应能看到 `discourse-cnkd-login`。
+
+### 2.4 升级
+
+```bash
+cd /var/discourse/plugins/discourse-cnkd-login
+git pull
+cd /var/discourse && ./launcher rebuild app
+```
 
 ---
 
