@@ -245,9 +245,14 @@ class DiscourseCnkdLogin::Authenticator < Auth::ManagedAuthenticator
 
   public
 
-  # 显示在 /my/preferences/account 的「已关联账号」里
-  def description_for_auth_hash(auth_token)
-    info = auth_token[:info] || {}
-    info["nickname"] || info["name"] || auth_token.dig(:extra, "cnkd_sub")
+  # 显示在 /my/preferences/account 的「已关联账号」。
+  #
+  # ⚠️ 注意参数类型：基类 Auth::ManagedAuthenticator#description_for_auth_hash
+  # 接收的是 UserAssociatedAccount 记录对象（基类内部调用 `auth_token.info`），
+  # 不是 OmniAuth 的 auth hash。早期版本的官方文档把它描述成 hash，容易踩坑。
+  def description_for_auth_hash(associated_account)
+    return if associated_account&.info.nil?
+    info = associated_account.info
+    info["nickname"] || info["name"] || associated_account.extra&.dig("cnkd_sub")
   end
 end

@@ -39,18 +39,20 @@ module ::DiscourseCnkdLogin
 
     def request
       conn = build_connection
-      response = conn.get(DiscourseCnkdLogin::USERINFO_PATH.to_s) do |req|
-        req.headers["Authorization"] = "Bearer #{@access_token}"
-        req.headers["Accept"] = "application/json"
-      end
+      response =
+        conn.get(DiscourseCnkdLogin::USERINFO_PATH) do |req|
+          req.headers["Authorization"] = "Bearer #{@access_token}"
+          req.headers["Accept"] = "application/json"
+        end
 
       body = parse_body(response)
 
-      if response.status == 200 && body && body["ok"]
+      if response.status == 200 && body.is_a?(Hash) && body["ok"]
         return Result.new(ok?: true, data: normalize(body["data"]))
       end
 
-      err = body && body["error"] ? body["error"] : {}
+      # 失败分支：CNKD 统一错误信封是 { ok: false, error: { code, message, requestId } }
+      err = body.is_a?(Hash) && body["error"].is_a?(Hash) ? body["error"] : {}
       Result.new(
         ok?: false,
         error_code: err["code"] || "http_#{response.status}",
@@ -58,13 +60,23 @@ module ::DiscourseCnkdLogin
         request_id: err["requestId"],
       )
     rescue Faraday::TimeoutError, Faraday::ConnectionFailed, Faraday::SSLError => e
-      Result.new(ok?: false, error_code: "network_error", error_message: e.message)
+      # 网络异常的技术细节只进日志；展示给用户的仍是通用文案
+      Rails.logger.warn(
+        "[#{DiscourseCnkdLogin::PLUGIN_NAME}] userinfo 网络异常: #{e.class} #{e.message}",
+      )
+      Result.new(
+        ok?: false,
+        error_code: "network_error",
+        error_message: I18n.t("login.cnkd.errors.unknown"),
+      )
     end
 
     def build_connection
       Faraday.new(url: DiscourseCnkdLogin.site_url) do |f|
-        f.request :url_encoded
-        f.response :raise_error, allowed_statuses: [200, 400, 401, 403, 404, 429, 500, 502, 503]
+        # 注意：这里不带 :raise_error。
+        # 业务错误（4xx）由 CNKD 用统一信封返回，我们需要读到 body 里的 message
+        # 才能映射成友好文案；一旦 raise，message 就丢了。
+        f.headers["User-Agent"] = "Discourse/#{Discourse::VERSION::STRING} CNKD-Login"
         f.adapter FinalDestination::FaradayAdapter
         f.options.timeout = 10
         f.options.open_timeout = 5
@@ -72,7 +84,7 @@ module ::DiscourseCnkdLogin
     end
 
     def parse_body(response)
-      JSON.parse(response.body)
+      JSON.parse(response.body.to_s)
     rescue JSON::ParserError
       nil
     end

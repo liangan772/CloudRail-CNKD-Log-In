@@ -223,5 +223,114 @@ RSpec.describe DiscourseCnkdLogin do
       DiscourseCnkdLogin::UserinfoClient.fetch("cnkd_access_token_stub_value")
       expect(a_request(:get, /userinfo/)).to have_been_made.twice
     end
+
+    it "网络异常时不把底层报错文本暴露给用户" do
+      stub_request(:get, /userinfo/).to_raise(Faraday::ConnectionFailed.new("connection refused"))
+      result = DiscourseCnkdLogin::UserinfoClient.fetch("cnkd_access_token_stub_value")
+      expect(result.ok?).to eq(false)
+      expect(result.error_code).to eq("network_error")
+      # 不应把 "connection refused" 这类内部信息透出
+      expect(result.error_message).not_to include("connection refused")
+      expect(result.error_message).to eq(I18n.t("login.cnkd.errors.unknown"))
+    end
+  end
+
+  # ------------------------------------------------------------- 认证器契约
+
+  describe "Authenticator 契约" do
+    let(:authenticator) { DiscourseCnkdLogin::Authenticator.new }
+
+    it "name 必须与 OmniAuth 策略名和回调路径一致" do
+      expect(authenticator.name).to eq("cnkd")
+      expect(OmniAuth::Strategies::Cnkd.new(nil).options.name).to eq("cnkd")
+      expect(DiscourseCnkdLogin::CALLBACK_PATH).to eq("/auth/cnkd/callback")
+    end
+
+    it "回调地址拼装正确（须逐字符登记到 CNKD）" do
+      expect(DiscourseCnkdLogin.callback_url).to end_with("/auth/cnkd/callback")
+    end
+
+    it "由 ManagedAuthenticator 托管账号关联" do
+      expect(authenticator.is_managed?).to eq(true)
+      expect(authenticator.can_connect_existing_user?).to eq(true)
+      expect(authenticator.can_revoke?).to eq(true)
+    end
+
+    # 这条覆盖一个真实踩过的坑：基类 description_for_auth_hash 收到的
+    # 是 UserAssociatedAccount 记录对象，不是 OmniAuth 的 auth hash。
+    # 若按 hash 访问（auth_token[:info]）会拿到 nil，
+    # 再 dig(:extra, ...) 会直接抛异常，导致「已关联账号」页面崩掉。
+    it "description_for_auth_hash 接收 AR 记录而非 hash" do
+      account =
+        UserAssociatedAccount.new(
+          provider_name: "cnkd",
+          provider_uid: sub,
+          info: {
+            "nickname" => "example-user",
+          },
+          extra: {
+            "cnkd_sub" => sub,
+          },
+        )
+
+      expect { authenticator.description_for_auth_hash(account) }.not_to raise_error
+      expect(authenticator.description_for_auth_hash(account)).to eq("example-user")
+    end
+
+    it "info 无 nickname 时回落到 extra 里的 sub" do
+      account =
+        UserAssociatedAccount.new(
+          provider_name: "cnkd",
+          provider_uid: sub,
+          info: {},
+          extra: {
+            "cnkd_sub" => sub,
+          },
+        )
+      expect(authenticator.description_for_auth_hash(account)).to eq(sub)
+    end
+
+    it "info 为 nil 时返回 nil 而不报错" do
+      account = UserAssociatedAccount.new(provider_name: "cnkd", provider_uid: sub, info: nil)
+      expect(authenticator.description_for_auth_hash(account)).to be_nil
+    end
+
+    it "required_settings 缺失时插件不启用" do
+      SiteSetting.cnkd_login_client_id = ""
+      expect(authenticator.configured?).to eq(false)
+    end
+
+    it "enable_setting 指向总开关" do
+      expect(authenticator.enable_setting).to eq(:cnkd_login_enabled)
+    end
+
+    it "primary_email_verified? 只认显式 true" do
+      expect(authenticator.primary_email_verified?({ info: { email_verified: true } })).to eq(true)
+      expect(authenticator.primary_email_verified?({ info: {} })).to eq(false)
+    end
+  end
+
+  # ------------------------------------------------------- 启动体检（非死代码）
+
+  describe "启动体检" do
+    # 早期版本把体检挂在 on(:site_settings_loaded) 上，该事件并不存在，
+    # DiscourseEvent.on 对未知事件静默接受但永不触发 —— 等于死代码。
+    it "未使用不存在的事件名 site_settings_loaded" do
+      source = File.read(File.expand_path("../plugin.rb", __dir__))
+      expect(source).not_to include("on(:site_settings_loaded)")
+    end
+
+    it "plugin.rb 里不设置 custom_url（否则会跳过 reconnect/signup 与跳回原页）" do
+      source = File.read(File.expand_path("../plugin.rb", __dir__))
+      # 允许出现在注释里说明原因，但不允许作为 auth_provider 的参数
+      expect(source).not_to match(/auth_provider[^\n]*custom_url/)
+    end
+
+    it "auth_provider 注册在顶层而非 after_initialize 内" do
+      source = File.read(File.expand_path("../plugin.rb", __dir__))
+      provider_index = source.index("auth_provider ")
+      after_init_index = source.index("after_initialize do")
+      expect(provider_index).to be < after_init_index
+    end
   end
 end
