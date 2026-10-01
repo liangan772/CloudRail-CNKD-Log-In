@@ -267,13 +267,20 @@ def check_referenced_keys(client_keys, server_keys):
     `js.admin.cnkd_login.check.x`。"""
     all_client = client_keys | server_keys
 
-    # 1) 后端 health_check / preview_renderer 里的 :"admin.cnkd_login.xxx"
-    symbol_re = re.compile(r':"((?:admin|site_settings|login)\.cnkd[^"]*)"')
+    # 1) 后端 health_check / preview_renderer 里的 :"cnkd_login.xxx"
+    #
+    # 这些 key 由前端用 i18n() 翻译，客户端 i18n 在 js.* 下，
+    # 所以真实路径是 js.cnkd_login.xxx。
+    symbol_re = re.compile(r':"((?:cnkd_login|admin|login)[\w.]*)"')
     referenced = set()
     for f in ROOT.rglob("*.rb"):
         src = f.read_text(encoding="utf-8")
         for m in symbol_re.finditer(src):
-            referenced.add(m.group(1))
+            key = m.group(1)
+            # 排除非 i18n 的符号字面量
+            if "." not in key:
+                continue
+            referenced.add(key)
 
     missing = []
     for key in sorted(referenced):
@@ -340,11 +347,100 @@ def check_template_keys(client_keys):
         notes.append(f"前端引用的 {len(used - dynamic)} 个 key 全部存在")
 
 
+def check_plugin_load_safety():
+    """检查 plugin.rb 是否存在「加载期就 raise」的写法。
+
+    这条检查来自一次真实故障：plugin.rb 在 `rake db:migrate` 期间也会被
+    加载，顶层一旦 raise，迁移就以 exit 1 失败，表现为
+        Pups::ExecError: ... 'bundle exec rake db:migrate' failed
+        ** FAILED TO BOOTSTRAP **
+    Discourse 的 register_asset 对 assets/javascripts/ 下的 .js 与 .hbs
+    会直接 raise，所以这两类注册必须禁止。
+    """
+    src = (ROOT / "plugin.rb").read_text(encoding="utf-8")
+    # 去掉注释行，避免注释里的示例代码误报
+    code_lines = [
+        ln for ln in src.split("\n") if not ln.lstrip().startswith("#")
+    ]
+    code = "\n".join(code_lines)
+
+    for m in re.finditer(r'register_asset\s+["\']([^"\']+)["\']', code):
+        target = m.group(1)
+        if target.startswith("javascripts/") or target.endswith((".hbs", ".handlebars")):
+            fail(
+                f"plugin.rb 用 register_asset 注册了 {target!r} —— "
+                "Discourse 会直接 raise，且 plugin.rb 在 db:migrate 期间也会加载，"
+                "会导致迁移失败（FAILED TO BOOTSTRAP）"
+            )
+
+    # 顶层定义控制器类：自动加载可能尚未就绪
+    first_after_init = code.split("after_initialize do")[0]
+    if re.search(r"class\s+\w+\s*<\s*::?\w*(Admin|Application)Controller", first_after_init):
+        fail("plugin.rb 顶层定义了控制器类，应改为在 after_initialize 里 require_dependency")
+
+    notes.append("plugin.rb 迁移期加载安全（无 JS/hbs 注册、无顶层控制器）")
+
+
+def check_admin_page_layout():
+    """检查后台页面文件是否遵循官方目录约定。
+
+    依据 discourse-developer-docs/docs/04-plugins/05-admin-interface.md：
+        assets/javascripts/discourse/<name>-route-map.js
+        assets/javascripts/discourse/controllers/admin-plugins-<name>.js
+        assets/javascripts/discourse/templates/admin/plugins-<name>.hbs
+    """
+    src = (ROOT / "plugin.rb").read_text(encoding="utf-8")
+
+    # add_admin_route 的第二个参数就是路由名
+    m = re.search(r'add_admin_route\s+"[^"]+",\s*"([^"]+)"', src)
+    if not m:
+        return  # 没注册后台页，跳过
+    route_name = m.group(1)
+
+    expected = {
+        f"assets/javascripts/discourse/{route_name}-route-map.js": "route map",
+        f"assets/javascripts/discourse/controllers/admin-plugins-{route_name}.js": "控制器",
+        f"assets/javascripts/discourse/templates/admin/plugins-{route_name}.hbs": "模板",
+    }
+    for rel, label in expected.items():
+        if not (ROOT / rel).is_file():
+            fail(f"后台页面缺少{label}：{rel}")
+
+    # 旧布局残留检查
+    legacy = ROOT / "assets/javascripts/discourse/admin"
+    if legacy.is_dir():
+        fail("存在旧布局目录 assets/javascripts/discourse/admin/，应改用官方约定路径")
+
+    notes.append(f"后台页面布局符合官方约定（路由名 {route_name}）")
+
+
+def check_route_map_consistency():
+    """route map 里声明的路由名必须与 add_admin_route 一致。"""
+    src = (ROOT / "plugin.rb").read_text(encoding="utf-8")
+    m = re.search(r'add_admin_route\s+"[^"]+",\s*"([^"]+)"', src)
+    if not m:
+        return
+    route_name = m.group(1)
+
+    map_file = ROOT / f"assets/javascripts/discourse/{route_name}-route-map.js"
+    if not map_file.is_file():
+        return
+
+    mapped = map_file.read_text(encoding="utf-8")
+    if f'this.route("{route_name}")' not in mapped:
+        fail(f"route map 里没有声明 this.route(\"{route_name}\")")
+    else:
+        notes.append("route map 与 add_admin_route 的路由名一致")
+
+
 # ---------------------------------------------------------------- main
 
 def main():
     check_yaml()
     check_ruby_brackets()
+    check_plugin_load_safety()
+    check_admin_page_layout()
+    check_route_map_consistency()
     client_keys, server_keys = check_locale_symmetry()
     check_referenced_keys(client_keys, server_keys)
     check_template_keys(client_keys)

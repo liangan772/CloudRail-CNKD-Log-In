@@ -8,14 +8,18 @@ en:
       site_settings:
         categories:
           discourse_cnkd_login: "CNKD OnePass Login"
-      # Strings for the admin settings page.
-      #
-      # Namespacing: client-side i18n lives under js.*, so
-      # i18n("cnkd_login.xxx") in the page resolves to js.cnkd_login.xxx.
-      # The domain is deliberately `cnkd_login` rather than
-      # `admin.cnkd_login` — the latter would sit alongside the route title
-      # js.admin.plugins.cnkd_login and risk key collisions.
+
+    # Strings for the admin settings page.
+    #
+    # Namespacing: client-side i18n lives under js.*, so
+    # i18n("cnkd_login.xxx") in the page resolves to js.cnkd_login.xxx.
+    #
+    # `admin.title` is used by add_admin_route as the label of the
+    # "Settings" link on /admin/plugins (plugin.rb passes
+    # "cnkd_login.admin.title").
     cnkd_login:
+      admin:
+        title: "CNKD OnePass"
       page:
         heading: "CNKD OnePass Login"
         subheading: "Integration with CNKD OnePass (OAuth 2.0 authorization code + S256 PKCE). Use this page to verify the configuration and diagnose problems; the settings themselves live under Site Settings."

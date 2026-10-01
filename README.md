@@ -191,11 +191,13 @@ LOAD_PLUGINS=1 bundle exec rspec plugins/discourse-cnkd-login/spec/plugin_spec.r
 ```
 discourse-cnkd-login/
 ├── plugin.rb                                  # 插件清单与注册
+├── app/controllers/discourse_cnkd_login/
+│   └── admin_controller.rb                    # 后台数据接口（自检 + 预览）
 ├── assets/
-│   ├── javascripts/discourse/admin/
-│   │   ├── cnkd-login.js                      # 后台设置页组件
-│   │   ├── routes/cnkd-login.js               # /admin/plugins/cnkd-login 路由
-│   │   └── templates/cnkd-login.hbs           # 后台设置页模板
+│   ├── javascripts/discourse/
+│   │   ├── cnkd-login-route-map.js            # admin 路由映射
+│   │   ├── controllers/admin-plugins-cnkd-login.js
+│   │   └── templates/admin/plugins-cnkd-login.hbs
 │   └── stylesheets/common/cnkd-login-admin.scss
 ├── config/
 │   ├── settings.yml                           # 站点设置
@@ -215,9 +217,60 @@ discourse-cnkd-login/
 └── script/validate.py                         # 无 Ruby 环境下的静态校验
 ```
 
+> 前端目录严格遵循官方约定（[developer-docs · Admin interface](https://github.com/discourse/discourse-developer-docs/blob/main/docs/04-plugins/05-admin-interface.md)）。
+> 三处命名必须一致，改一处就要改另外两处：
+> `add_admin_route` 的路由名 → `this.route(...)` → 控制器/模板文件名。
+
 ---
 
 ## 7. 排查
+
+### 7.0 重建失败：`db:migrate` 报错 / FAILED TO BOOTSTRAP
+
+```
+Pups::ExecError: cd /var/www/discourse && su discourse -c 'bundle exec rake db:migrate' failed
+** FAILED TO BOOTSTRAP **
+```
+
+**先看报错上方几行**，`db:migrate` 本身通常不是元凶 —— 它只是被上游异常
+带崩了。最常见的两类原因：
+
+| 原因 | 表现 | 处理 |
+| --- | --- | --- |
+| 插件 `plugin.rb` 在加载期 raise | 上方能看到 `[插件名]` 开头的异常或 `RuntimeError` | 见下方说明 |
+| 磁盘空间不足 | `No space left on device` | `df -h` 后清理 Docker 镜像 |
+
+**关于第一类**：`plugin.rb` **在 `rake db:migrate` 期间也会被加载** ——
+`Plugin::Instance#activate!` 会把插件目录加入迁移路径。所以哪怕
+插件里只有一行在加载期抛错的代码，也会让迁移整体失败。
+
+本插件踩过这个坑：`register_asset` 对 `assets/javascripts/` 下的
+`.js` 与 `.hbs` **会直接 raise**：
+
+```
+[discourse-cnkd-login] Javascript files under assets/javascripts are automatically
+included in JS bundles. Manual register_asset calls should be removed.
+```
+
+现在插件里**没有任何 `register_asset` 调用** —— `assets/javascripts/**`
+与 `assets/stylesheets/**` 都由构建系统按目录约定自动收录。
+`script/validate.py` 里有专门的检查守住这条规则。
+
+想快速定位是哪条插件在抛错，看上面的完整输出，或者：
+
+```bash
+cd /var/discourse
+./launcher rebuild app 2>&1 | tee /tmp/rebuild.log
+grep -n -B3 -A15 "db:migrate" /tmp/rebuild.log | head -60
+```
+
+若怀疑是插件导致，可临时移出插件再重建验证：
+
+```bash
+mv plugins/discourse-cnkd-login /tmp/
+./launcher rebuild app
+# 确认能起来后再移回来
+```
 
 ### 7.1 用后台设置页面自检（推荐）
 

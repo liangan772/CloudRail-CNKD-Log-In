@@ -1,16 +1,4 @@
 zh_CN:
-  # add_admin_route 用到的路由标题。
-  #
-  # 注意 key 前缀：add_admin_route 会把域名点号拼接成
-  # admin_js.admin.plugins.<domain>.title，因此这里用的是 `admin_js:`
-  # 而不是 `js:` —— 与 client.*.yml 里的页面文案区分开，
-  # 避免路由标题和页面标题互相覆盖。
-  admin_js:
-    admin:
-      plugins:
-        cnkd_login:
-          title: "CNKD 一证通行"
-
   site_settings:
     cnkd_login_enabled: "启用 CNKD 一证通行登录。关闭后登录页不再显示 CNKD 入口。"
     cnkd_login_client_id: "CNKD 分配的应用 client_id（形如 cnkd_xxxxxxxx）。"

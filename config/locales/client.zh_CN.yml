@@ -8,14 +8,18 @@ zh_CN:
       site_settings:
         categories:
           discourse_cnkd_login: "CNKD 一证通行登录"
-      # 后台设置页面文案。
-      #
-      # 命名空间说明：客户端 i18n 统一在 js.* 下，所以页面里
-      # i18n("cnkd_login.xxx") 实际取的是 js.cnkd_login.xxx。
-      # 这里刻意用 `cnkd_login` 而不是 `admin.cnkd_login` ——
-      # 后者会和路由标题 js.admin.plugins.cnkd_login 挤在同一层，
-      # 容易踩到 key 覆盖，排查起来很费劲。
+
+    # 后台设置页面文案。
+    #
+    # 命名空间：客户端 i18n 都在 js.* 下，页面里 i18n("cnkd_login.xxx")
+    # 取的就是 js.cnkd_login.xxx。
+    #
+    # 注意 admin.title 这个 key 被 add_admin_route 用来做
+    # /admin/plugins 插件列表里「设置」链接的标题
+    # （plugin.rb 里写的是 "cnkd_login.admin.title"）。
     cnkd_login:
+      admin:
+        title: "CNKD 一证通行"
       page:
         heading: "CNKD 一证通行登录"
         subheading: "对接 CNKD 一证通行（OAuth 2.0 授权码 + S256 PKCE）。本页面用于核对配置与排查问题，设置项本身在「站点设置」中修改。"

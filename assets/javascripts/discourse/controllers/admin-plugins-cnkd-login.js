@@ -1,12 +1,15 @@
+import Controller from "@ember/controller";
 import { action } from "@ember/object";
-import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { i18n } from "discourse-i18n";
-import { isTesting } from "discourse/lib/environment";
 
 // CNKD 一证通行 · 后台设置页面。
+//
+// 文件路径 `controllers/admin-plugins-cnkd-login.js` 是 Discourse 的约定：
+// 路由 admin.adminPlugins → cnkd-login 对应的控制器名就是
+// admin-plugins-cnkd-login。模板同理（templates/admin/plugins-cnkd-login.hbs）。
 //
 // 这个页面做三件事，对应 CNKD 接入里最容易出错的三类问题：
 //
@@ -18,11 +21,10 @@ import { isTesting } from "discourse/lib/environment";
 //      方便对着 CNKD 后台登记值逐字符核对。
 //
 // 数据来源是插件自己的 /cnkd-login/preview 接口（只读、需管理员）。
-export default class CnkdLoginAdmin extends Component {
+export default class AdminPluginsCnkdLoginController extends Controller {
   // 自检结果、当前配置与握手预览，首次渲染后从服务端拉取
   @tracked status = null;
   @tracked loading = true;
-  @tracked loadError = null;
 
   // 握手预览当前展开到第几步；null 表示全部收起
   @tracked expandedStep = null;
@@ -30,13 +32,11 @@ export default class CnkdLoginAdmin extends Component {
   // 回调地址刚被复制的提示
   @tracked copied = false;
 
-  constructor() {
-    super(...arguments);
-    // 测试环境下不自动发请求 —— 否则组件渲染就会触发真实 ajax，
-    // 在集成测试里产生噪音（Discourse 核心组件普遍遵循这个约定）。
-    if (!isTesting()) {
-      this.loadStatus();
-    }
+  // 把初始化改到 init 钩子里 —— 控制器由 Ember 负责实例化，
+  // 拿不到组件那样的 constructor(...arguments) 语义。
+  init() {
+    super.init(...arguments);
+    this.loadStatus();
   }
 
   // 设置本身在站点设置页里编辑。
@@ -44,7 +44,9 @@ export default class CnkdLoginAdmin extends Component {
   // 这里刻意不自建表单：站点设置的类型校验、权限、变更审计、多站点
   // 隔离都由 Discourse 核心负责，自建表单等于把这些重新实现一遍，
   // 而且升级时更容易踩坑。本页面负责的是「看得懂 + 查得出问题」。
-  settingsUrl = "/admin/site_settings/category/discourse_cnkd_login";
+  get settingsUrl() {
+    return "/admin/site_settings/category/discourse_cnkd_login";
+  }
 
   // -------------------------------------------------------------- 基础数据
 
@@ -58,10 +60,6 @@ export default class CnkdLoginAdmin extends Component {
 
   get previewSteps() {
     return this.status?.preview ?? [];
-  }
-
-  get healthy() {
-    return this.status?.healthy ?? false;
   }
 
   get configured() {
@@ -83,23 +81,10 @@ export default class CnkdLoginAdmin extends Component {
     if (!this.status) {
       return "loading";
     }
-    if (!this.configured || !this.healthy) {
+    if (!this.configured || !this.status.healthy) {
       return "error";
     }
     return this.warningCount > 0 ? "warning" : "ok";
-  }
-
-  get overallIcon() {
-    switch (this.overallLevel) {
-      case "ok":
-        return "circle-check";
-      case "warning":
-        return "triangle-exclamation";
-      case "loading":
-        return "spinner";
-      default:
-        return "circle-exclamation";
-    }
   }
 
   get overallMessage() {
@@ -145,7 +130,7 @@ export default class CnkdLoginAdmin extends Component {
 
     return Object.entries(settings).map(([key, meta]) => ({
       key,
-      display: this.formatValue(meta.value),
+      display: this._formatValue(meta.value),
       scopeClass: meta.client_visible ? "client" : "server",
       scopeLabel: i18n(
         meta.client_visible
@@ -155,29 +140,14 @@ export default class CnkdLoginAdmin extends Component {
     }));
   }
 
-  formatValue(value) {
-    if (value === null || value === undefined || value === "") {
-      return null;
-    }
-    if (value === true) {
-      return "true";
-    }
-    if (value === false) {
-      return "false";
-    }
-    return String(value);
-  }
-
   // ------------------------------------------------------------ 动作
 
   @action
   async loadStatus() {
     this.loading = true;
-    this.loadError = null;
     try {
       this.status = await ajax("/cnkd-login/preview");
     } catch (e) {
-      this.loadError = e;
       popupAjaxError(e);
     } finally {
       this.loading = false;
@@ -213,7 +183,7 @@ export default class CnkdLoginAdmin extends Component {
     }
   }
 
-  // ------------------------------------------------------------ 展示辅助
+  // ------------------------------------------------------------ 模板辅助
 
   // 后端产出的 message 是 i18n key，这里翻成当前语言
   checkMessage(check) {
@@ -232,7 +202,7 @@ export default class CnkdLoginAdmin extends Component {
     return step.note ? i18n(step.note) : "";
   }
 
-  // 请求头用 JSON 展示 —— 后端给的是 hash，模板里直接输出会变成
+  // 请求头逐行展示 —— 后端给的是 hash，模板里直接输出会变成
   // "[object Object]"，必须在 JS 侧序列化。
   headersText(step) {
     if (!step.headers) {
@@ -258,7 +228,33 @@ export default class CnkdLoginAdmin extends Component {
     }
   }
 
+  overallIcon() {
+    switch (this.overallLevel) {
+      case "ok":
+        return "circle-check";
+      case "warning":
+        return "triangle-exclamation";
+      case "loading":
+        return "spinner";
+      default:
+        return "circle-exclamation";
+    }
+  }
+
   chevronIcon(step) {
     return this.expandedStep === step ? "chevron-up" : "chevron-down";
+  }
+
+  _formatValue(value) {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+    if (value === true) {
+      return "true";
+    }
+    if (value === false) {
+      return "false";
+    }
+    return String(value);
   }
 }

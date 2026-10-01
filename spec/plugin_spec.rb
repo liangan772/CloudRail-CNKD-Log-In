@@ -468,26 +468,107 @@ RSpec.describe DiscourseCnkdLogin do
   # --------------------------------------------------------- 后台设置页装配
 
   describe "后台设置页装配" do
-    it "通过 add_admin_route 注册了 cnkd-login 页面" do
-      source = File.read(File.expand_path("../plugin.rb", __dir__))
-      expect(source).to include('add_admin_route("cnkd_login", "cnkd-login"')
+    let(:plugin_source) { File.read(File.expand_path("../plugin.rb", __dir__)) }
+
+    # ---------------------------------------------------- 迁移期安全（回归）
+
+    # 这是本项目踩过的真实故障：plugin.rb 在 `rake db:migrate` 期间
+    # 也会被加载，一旦顶层有 raise，迁移就以 exit 1 失败，表现为
+    #   Pups::ExecError: ... 'bundle exec rake db:migrate' failed
+    #   ** FAILED TO BOOTSTRAP **
+    #
+    # register_asset 对 assets/javascripts/ 下的 .js / .hbs 会直接 raise。
+    describe "迁移期加载安全" do
+      it "不对 javascripts 调用 register_asset" do
+        expect(plugin_source).not_to match(
+          /^\s*register_asset\s+["']javascripts\//,
+        )
+      end
+
+      it "不对 hbs 调用 register_asset" do
+        expect(plugin_source).not_to match(/register_asset\s+["'][^"']*\.hbs/)
+      end
+
+      it "没有任何 register_asset 调用（assets 由构建系统自动收录）" do
+        expect(plugin_source).not_to match(/^\s*register_asset\b/)
+      end
+
+      it "顶层不定义控制器类（避免自动加载未就绪）" do
+        # 顶层出现 `class X < ::Admin::AdminController` 是危险的，
+        # 必须在 after_initialize 里 require_dependency 独立文件。
+        top_level = plugin_source.split("after_initialize do").first
+        expect(top_level).not_to match(/class\s+\w+\s*<\s*::Admin::AdminController/)
+      end
+
+      it "控制器通过 require_dependency 从独立文件加载" do
+        expect(plugin_source).to include("require_dependency")
+        expect(plugin_source).to include("discourse_cnkd_login/admin_controller.rb")
+      end
     end
 
-    it "管理接口挂在 /cnkd-login/preview" do
-      source = File.read(File.expand_path("../plugin.rb", __dir__))
-      expect(source).to include('get "/cnkd-login/preview"')
+    # ------------------------------------------------------------ 路由注册
+
+    it "通过 add_admin_route 注册，传的是完整 i18n key" do
+      # 官方文档写法：add_admin_route 'purple_tentacle.title', 'purple-tentacle'
+      expect(plugin_source).to match(
+        /add_admin_route\s+"cnkd_login\.admin\.title",\s*"cnkd-login"/,
+      )
     end
 
-    # 管理接口必须继承 Admin::AdminController，否则普通用户能读到配置
-    it "管理控制器继承 Admin::AdminController" do
-      source = File.read(File.expand_path("../plugin.rb", __dir__))
-      expect(source).to match(/class AdminController < ::Admin::AdminController/)
+    it "注册了服务端页面路由，避免直接访问 404" do
+      expect(plugin_source).to include(
+        'get "/admin/plugins/cnkd-login" => "admin/plugins#index"',
+      )
     end
 
-    it "管理控制器声明 requires_plugin" do
-      source = File.read(File.expand_path("../plugin.rb", __dir__))
-      expect(source).to include("requires_plugin DiscourseCnkdLogin::PLUGIN_NAME")
+    it "服务端页面路由带 StaffConstraint" do
+      expect(plugin_source).to match(
+        %r{/admin/plugins/cnkd-login.*StaffConstraint},
+      )
     end
+
+    it "数据接口挂在 /cnkd-login/preview" do
+      expect(plugin_source).to include('get "/cnkd-login/preview"')
+    end
+
+    # ------------------------------------------------------ 前端文件布局
+
+    # 布局遵循官方 developer-docs 04-plugins/05-admin-interface.md
+    describe "前端文件布局" do
+      let(:root) { File.expand_path("..", __dir__) }
+
+      it "route map 放在 assets/javascripts/discourse/ 下且以 -route-map.js 结尾" do
+        expect(File.exist?(File.join(root, "assets/javascripts/discourse/cnkd-login-route-map.js"))).to eq(true)
+      end
+
+      it "route map 声明了 admin.adminPlugins 下的 cnkd-login 路由" do
+        src = File.read(File.join(root, "assets/javascripts/discourse/cnkd-login-route-map.js"))
+        expect(src).to include('resource: "admin.adminPlugins"')
+        expect(src).to include('this.route("cnkd-login")')
+      end
+
+      it "控制器命名为 admin-plugins-cnkd-login（与路由名对应）" do
+        expect(
+          File.exist?(
+            File.join(root, "assets/javascripts/discourse/controllers/admin-plugins-cnkd-login.js"),
+          ),
+        ).to eq(true)
+      end
+
+      it "模板放在 templates/admin/ 下且命名为 plugins-cnkd-login.hbs" do
+        expect(
+          File.exist?(
+            File.join(root, "assets/javascripts/discourse/templates/admin/plugins-cnkd-login.hbs"),
+          ),
+        ).to eq(true)
+      end
+
+      it "不再残留旧的 admin/ 目录布局" do
+        expect(File.exist?(File.join(root, "assets/javascripts/discourse/admin"))).to eq(false)
+      end
+    end
+
+    # ------------------------------------------------------------ 设置白名单
 
     it "设置白名单覆盖 settings.yml 里的全部 cnkd_login_* 设置" do
       settings = YAML.load_file(File.expand_path("../config/settings.yml", __dir__))
@@ -495,25 +576,30 @@ RSpec.describe DiscourseCnkdLogin do
       expect(declared.sort).to eq(DiscourseCnkdLogin.admin_setting_keys.sort)
     end
 
-    it "页面资源已注册" do
-      source = File.read(File.expand_path("../plugin.rb", __dir__))
-      expect(source).to include("stylesheets/common/cnkd-login-admin.scss")
-      expect(source).to include("javascripts/discourse/admin/cnkd-login.js")
+    # ------------------------------------------------------------ i18n 完整
+
+    it "add_admin_route 用到的 key 在两个语言文件里都存在" do
+      %w[zh_CN en].each do |locale|
+        data = YAML.load_file(File.expand_path("../config/locales/client.#{locale}.yml", __dir__))
+        expect(data[locale]["js"]["cnkd_login"]["admin"]["title"]).to be_present
+      end
     end
 
-    # 前端模板里用到的 i18n key 必须真实存在，否则页面会显示
+    # 模板里用到的 i18n key 必须真实存在，否则页面会显示
     # "translation missing" —— 这类问题在后台很难被注意到。
     it "模板里的 i18n key 全部存在" do
       template =
-        File.read(File.expand_path("../assets/javascripts/discourse/admin/templates/cnkd-login.hbs", __dir__))
+        File.read(
+          File.expand_path(
+            "../assets/javascripts/discourse/templates/admin/plugins-cnkd-login.hbs",
+            __dir__,
+          ),
+        )
       keys = template.scan(/\{\{i18n\s+"([a-z0-9_.]+)"/).flatten
-      keys << template.scan(/@label="([a-z0-9_.]+)"/).flatten
-      keys.flatten!
+      keys |= template.scan(/@label="([a-z0-9_.]+)"/).flatten
 
       expect(keys).not_to be_empty
       keys.each do |key|
-        # 动态 label 在组件里由 JS 决定，这里跳过运行时常量
-        next if key.start_with?("cnkd_login.status.copy")
         expect(I18n.t("js.#{key}")).not_to include("translation missing")
       end
     end

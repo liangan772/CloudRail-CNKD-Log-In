@@ -5,19 +5,19 @@
   </div>
 
   {{! ------------------------------------------------------- 状态总览 }}
-  <div class="cnkd-login-status cnkd-login-status--{{this.overallLevel}}">
+  <div class="cnkd-login-status cnkd-login-status--{{overallLevel}}">
     <div class="cnkd-login-status__icon">
-      <DTooltip @icon={{this.overallIcon}} />
+      <DTooltip @icon={{overallIcon}} />
     </div>
     <div class="cnkd-login-status__body">
-      <div class="cnkd-login-status__title">{{this.overallMessage}}</div>
+      <div class="cnkd-login-status__title">{{overallMessage}}</div>
       <div class="cnkd-login-status__meta">
-        {{#if this.status}}
+        {{#if status}}
           {{i18n
             "cnkd_login.status.summary"
-            configured=this.configuredLabel
-            errors=this.errorCount
-            warnings=this.warningCount
+            configured=configuredLabel
+            errors=errorCount
+            warnings=warningCount
           }}
         {{/if}}
       </div>
@@ -25,8 +25,8 @@
     <DButton
       @icon="rotate"
       @label="cnkd_login.status.refresh"
-      @action={{this.loadStatus}}
-      @disabled={{this.loading}}
+      @action={{action "loadStatus"}}
+      @disabled={{loading}}
       class="btn-default"
     />
   </div>
@@ -36,16 +36,16 @@
     <label>{{i18n "cnkd_login.callback.label"}}</label>
     <p class="cnkd-login-callback__hint">{{i18n "cnkd_login.callback.hint"}}</p>
     <div class="cnkd-login-callback__row">
-      {{#if this.callbackUrl}}
-        <code>{{this.callbackUrl}}</code>
+      {{#if callbackUrl}}
+        <code>{{callbackUrl}}</code>
       {{else}}
         <code>{{i18n "cnkd_login.callback.unavailable"}}</code>
       {{/if}}
       <DButton
         @icon="copy"
-        @label={{this.copyLabel}}
-        @action={{this.copyCallback}}
-        @disabled={{not this.callbackUrl}}
+        @label={{copyLabel}}
+        @action={{action "copyCallback"}}
+        @disabled={{not callbackUrl}}
         class="btn-default"
       />
     </div>
@@ -55,16 +55,16 @@
   <div class="cnkd-login-checks">
     <h3>{{i18n "cnkd_login.checks.heading"}}</h3>
 
-    {{#if this.loading}}
+    {{#if loading}}
       <div class="spinner-container">{{loading-spinner}}</div>
     {{else}}
-      {{#each this.checks as |check|}}
-        <div class="cnkd-login-check {{this.levelClass check.level}}">
+      {{#each checks as |check|}}
+        <div class="cnkd-login-check {{levelClass check.level}}">
           <div class="cnkd-login-check__icon">
-            <DTooltip @icon={{this.levelIcon check.level}} />
+            <DTooltip @icon={{levelIcon check.level}} />
           </div>
           <div class="cnkd-login-check__body">
-            <div>{{this.checkMessage check}}</div>
+            <div>{{checkMessage check}}</div>
             {{#if check.detail}}
               <div class="cnkd-login-check__detail">{{check.detail}}</div>
             {{/if}}
@@ -79,7 +79,7 @@
     <h3>{{i18n "cnkd_login.settings.heading"}}</h3>
     <p class="cnkd-login-settings__intro">{{i18n "cnkd_login.settings.intro"}}</p>
 
-    {{#if this.loading}}
+    {{#if loading}}
       <div class="spinner-container">{{loading-spinner}}</div>
     {{else}}
       <table class="cnkd-login-settings__table">
@@ -91,7 +91,7 @@
           </tr>
         </thead>
         <tbody>
-          {{#each this.settingRows as |row|}}
+          {{#each settingRows as |row|}}
             <tr>
               <td><code>{{row.key}}</code></td>
               <td class="cnkd-login-settings__value">
@@ -120,20 +120,20 @@
     <h3>{{i18n "cnkd_login.preview.heading"}}</h3>
     <p class="cnkd-login-preview__intro">{{i18n "cnkd_login.preview.intro"}}</p>
 
-    {{#each this.previewSteps as |step index|}}
+    {{#each previewSteps as |step index|}}
       <div class="cnkd-login-step">
         <button type="button" class="cnkd-login-step__head" {{on "click" (fn this.toggleStep step.step)}}>
           <span class="cnkd-login-step__index">{{inc index}}</span>
           <span class="cnkd-login-step__titles">
-            <span class="cnkd-login-step__title">{{this.stepTitle step}}</span>
+            <span class="cnkd-login-step__title">{{stepTitle step}}</span>
             <br />
-            <span class="cnkd-login-step__subtitle">{{this.stepSubtitle step}}</span>
+            <span class="cnkd-login-step__subtitle">{{stepSubtitle step}}</span>
           </span>
           <span class="cnkd-login-step__method">{{step.method}}</span>
-          <DTooltip @icon={{this.chevronIcon step.step}} />
+          <DTooltip @icon={{chevronIcon step.step}} />
         </button>
 
-        {{#if (eq this.expandedStep step.step)}}
+        {{#if (eq expandedStep step.step)}}
           <div class="cnkd-login-step__body">
             {{#if step.url}}
               <div class="cnkd-login-step__section">
@@ -145,7 +145,7 @@
             {{#if step.headers}}
               <div class="cnkd-login-step__section">
                 <h5>{{i18n "cnkd_login.preview.field.headers"}}</h5>
-                <pre>{{this.headersText step}}</pre>
+                <pre>{{headersText step}}</pre>
               </div>
             {{/if}}
 
@@ -157,7 +157,7 @@
             {{/if}}
 
             {{#if step.note}}
-              <div class="cnkd-login-step__note">{{this.stepNote step}}</div>
+              <div class="cnkd-login-step__note">{{stepNote step}}</div>
             {{/if}}
           </div>
         {{/if}}
@@ -170,7 +170,7 @@
     <DButton
       @icon="gear"
       @label="cnkd_login.page.open_settings"
-      @action={{this.openSettings}}
+      @action={{action "openSettings"}}
       class="btn-primary"
     />
   </div>

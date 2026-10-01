@@ -1,16 +1,4 @@
 en:
-  # Title used by add_admin_route.
-  #
-  # Note the key prefix: add_admin_route joins the domain's dots into
-  # admin_js.admin.plugins.<domain>.title, so this lives under `admin_js:`
-  # rather than `js:` — kept separate from the page strings in client.*.yml
-  # so the route title and the page heading cannot overwrite each other.
-  admin_js:
-    admin:
-      plugins:
-        cnkd_login:
-          title: "CNKD OnePass"
-
   site_settings:
     cnkd_login_enabled: "Enable login with CNKD OnePass. When disabled, the CNKD button is hidden from the login page."
     cnkd_login_client_id: "The client_id assigned by CNKD (looks like cnkd_xxxxxxxx)."

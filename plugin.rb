@@ -11,21 +11,31 @@
 
 enabled_site_setting :cnkd_login_enabled
 
-# 后台设置页面的资源。
+# ⚠️ 不要调用 register_asset 注册 assets/javascripts/ 下的文件。
 #
-# Discourse 会自动收录 assets/javascripts/** 与 assets/stylesheets/** 下的
-# 文件，路径规则是 `assets/` 之后的部分，所以这里写的是相对 assets/ 的路径。
+# Discourse 的 `register_asset` 对 .js 文件**直接 raise**（见
+# lib/plugin/instance.rb）：
+#     "[...] Javascript files under assets/javascripts are automatically
+#      included in JS bundles. Manual register_asset calls should be removed."
+# .hbs 同理也会 raise。
 #
-# 样式只在 admin 里用，但仍放 common/ —— 因为 admin 构建同样会读 common，
-# 而放 desktop/ 会导致移动端后台看不到样式。
-register_asset "stylesheets/common/cnkd-login-admin.scss"
-
-# 页面组件。type: :admin 让它只进 admin bundle，
-# 普通用户不会下载这段 JS。
-register_asset "javascripts/discourse/admin/cnkd-login.js", type: :admin
-
-# 客户端 i18n（登录按钮文案 + 后台页面文案）由 config/locales/client.*.yml
-# 提供，键挂在 js.login.cnkd.* 与 js.admin.cnkd_login.* 下。
+# 这一点在本插件上曾经造成过一次真实故障：plugin.rb 在 `rake db:migrate`
+# 期间也会被加载（Plugin::Instance#activate! 把插件目录加入迁移路径），
+# 于是这里一 raise，迁移就以 exit 1 失败，表现为
+# `Pups::ExecError: ... 'bundle exec rake db:migrate' failed` 与
+# `FAILED TO BOOTSTRAP`。
+#
+# 结论：assets/javascripts/** 与 assets/stylesheets/** 都由构建系统按
+# 目录约定自动收录，plugin.rb 里不需要、也不应该注册它们。
+#
+# 前端文件布局（全部遵循官方约定，见 developer-docs 04-plugins/05）：
+#   assets/javascripts/discourse/cnkd-login-route-map.js         路由映射
+#   assets/javascripts/discourse/controllers/admin-plugins-cnkd-login.js
+#   assets/javascripts/discourse/templates/admin/plugins-cnkd-login.hbs
+#   assets/stylesheets/common/cnkd-login-admin.scss
+#
+# 客户端 i18n 由 config/locales/client.*.yml 提供，
+# 键挂在 js.login.cnkd.* 与 js.cnkd_login.* 下。
 
 # CNKD 一证通行 · Discourse 登录插件
 #
@@ -172,91 +182,45 @@ auth_provider authenticator: DiscourseCnkdLogin::Authenticator.new
 
 # 后台设置界面入口。
 #
-# add_admin_route 会在 /admin/plugins 的插件列表里挂一个「设置」按钮，
-# 并注册前端路由 /admin/plugins/cnkd-login。注意必须放在顶层：
-# 它的实现依赖 Discourse::Application.routes.append，放在 after_initialize
-# 里虽然也能跑，但会让插件清单的「一次性注册」语义变模糊。
+# 第一个参数是**完整的 i18n key**（不是域名）——
+# 官方 developer-docs 的写法就是 `add_admin_route 'purple_tentacle.title', 'purple-tentacle'`，
+# 这个 key 会在 /admin/plugins 插件列表里作为「设置」链接的标题显示。
 #
-# 传的是域名（cnkd_login）而不是完整 key —— add_admin_route 内部会
-# 拼成 admin_js.admin.plugins.cnkd_login.title 去找翻译。
-#
-# use_new_show_route: true 是 Discourse 3.2+ 的新路由格式
-# （路由直接挂在 admin 命名空间下，不再需要 legacy 的 adminPlugins 包装）。
-add_admin_route("cnkd_login", "cnkd-login", use_new_show_route: true)
+# 第二个参数是前端路由名，必须与 route-map 里的
+# `this.route("cnkd-login")` 以及模板名 plugins-cnkd-login.hbs 严格对应。
+add_admin_route "cnkd_login.admin.title", "cnkd-login"
 
-# 自检 + 握手预览接口。
+# 服务端路由。
 #
-# 只读取站点设置、不发任何外网请求，因此没有 SSRF 面；
-# 响应里 client_secret 已被 PreviewRenderer 掩码，不会外泄原文。
+# 前端路由需要一个服务端对应项：用户直接在地址栏访问
+# /admin/plugins/cnkd-login 时，Rails 得能返回点什么（否则 404）。
+# 官方示例复用 `admin/plugins#index` 返回骨架，前端 Ember 接手渲染 ——
+# 数据走我们自己下面的 /cnkd-login/preview 接口。
+#
+# StaffConstraint 保证只有员工能访问，与 admin 区的可见性一致。
 Discourse::Application.routes.append do
+  get "/admin/plugins/cnkd-login" => "admin/plugins#index", constraints: StaffConstraint.new
+
+  # 自检 + 握手预览数据接口。
+  #
+  # 只读取站点设置、不发任何外网请求，因此没有 SSRF 面；
+  # 响应里 client_secret 已被 PreviewRenderer 掩码，不会外泄原文。
   get "/cnkd-login/preview" => "discourse_cnkd_login/admin#preview"
 end
 
-module ::DiscourseCnkdLogin
-  # 挂在 /cnkd-login/preview。继承 Admin::AdminController 即完成鉴权，
-  # 无需自己写权限判断。
-  class AdminController < ::Admin::AdminController
-    # 插件被禁用时路由直接 404，与「设置不可见」的状态保持一致
-    requires_plugin DiscourseCnkdLogin::PLUGIN_NAME
 
-    def preview
-      checks = DiscourseCnkdLogin::HealthCheck.run
-
-      render_json_dump(
-        callback_url: DiscourseCnkdLogin.callback_url,
-        site_url: DiscourseCnkdLogin.site_url,
-        client_type: SiteSetting.cnkd_login_client_type,
-        pkce: DiscourseCnkdLogin::Authenticator.new.pkce_enabled?,
-        scopes: DiscourseCnkdLogin.requested_scopes,
-        configured: DiscourseCnkdLogin::HealthCheck.configured?,
-        healthy: !DiscourseCnkdLogin::HealthCheck.error?(checks),
-        checks: checks.map { |c| serialize_check(c) },
-        preview: DiscourseCnkdLogin::PreviewRenderer.steps,
-        settings: serialize_settings,
-      )
-    end
-
-    private
-
-    # 把 11 项设置的值一并发给页面，让管理员在这个页面上
-    # 就能看到「当前生效的值是多少」，不用来回跳转到站点设置。
-    #
-    # secret 类是唯一例外：SiteSetting 返回的是 "******" 占位符而不是原文
-    # （这是 Discourse 核心的行为），正合适 —— 页面只需要知道「填了没有」。
-    def serialize_settings
-      DiscourseCnkdLogin.admin_setting_keys.index_with do |key|
-        {
-          value: SiteSetting.public_send(key),
-          client_visible: DiscourseCnkdLogin.client_visible_setting?(key),
-        }
-      end
-    end
-
-    # message 是 i18n key，交给前端本地化 ——
-    # 同一份 check 数据也会被写进服务端日志，保持「后端产出 key、
-    # 展示层负责翻译」这条线不破，两边就不会各写一套文案。
-    def serialize_check(check)
-      {
-        id: check[:id],
-        level: check[:level],
-        message: check[:message],
-        detail: check[:detail],
-      }
-    end
-  end
-end
-
-# 后台设置页面的前端装配。
+# 后台设置页面的控制器。
 #
-# 页面主体由 assets/javascripts/discourse/admin/templates/cnkd-login.hbs
-# 提供（Ember 原生模板），路由由上面的 add_admin_route 注册。
+# ⚠️ 控制器类不要写在 plugin.rb 的顶层。
 #
-# 没有用 `withPluginApi("1.x")` + appEvents 的原因：
-#   插件初始化时会先做一次 setting snapshot，若在初始化**之前**就
-#   import 设置类，会污染 snapshot 里的默认值（官方 developer-guides
-#   明确警告过）。原生模板渲染天然避开这个坑。
+# 顶层 `class Foo < ::Admin::AdminController` 会在 plugin.rb 被 eval 的
+# 瞬间定义类体，此时 Rails 的自动加载尚未就绪（迁移期尤其如此），
+# 容易踩到常量未定义的坑。正确做法是在 after_initialize 里
+# require_dependency 一个独立文件 —— 这是 Discourse 官方插件通用的写法。
 
 after_initialize do
+  require_dependency File.expand_path("app/controllers/discourse_cnkd_login/admin_controller.rb", __dir__)
+
   # 启动时做一次配置体检，把「能提前发现」的错误尽早暴露到日志里，
   # 而不是等用户点了登录按钮才报错。
   #
