@@ -406,6 +406,18 @@ RSpec.describe DiscourseCnkdLogin do
         expect(I18n.t("js.#{key}")).not_to include("translation missing")
       end
     end
+
+    # id 是稳定短标识，message 是 i18n key —— 两者不能混用。
+    # 早期 ok() 只收一个参数，把 i18n key 塞进了 id，日志里因此出现
+    # 一长串 key 作为「错误编号」。这里守住这条界线。
+    it "id 是短标识、message 是独立 i18n key，两者不混用" do
+      checks = DiscourseCnkdLogin::HealthCheck.run
+      checks.each do |check|
+        expect(check[:id].to_s).not_to include(".")
+        expect(check[:id]).not_to eq(check[:message])
+        expect(check[:message].to_s).to start_with("cnkd_login.check.")
+      end
+    end
   end
 
   # ------------------------------------------------------ 握手预览（PreviewRenderer）

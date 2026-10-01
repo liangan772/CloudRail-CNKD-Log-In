@@ -54,7 +54,7 @@ module ::DiscourseCnkdLogin
           :"cnkd_login.check.client_id_missing",
         )
       else
-        ok(:"cnkd_login.check.client_id_ok")
+        ok(:client_id_ok, :"cnkd_login.check.client_id_ok")
       end
     end
 
@@ -68,7 +68,7 @@ module ::DiscourseCnkdLogin
             :"cnkd_login.check.public_app_has_secret",
           )
         else
-          ok(:"cnkd_login.check.public_app_secret_ok")
+          ok(:public_app_secret_ok, :"cnkd_login.check.public_app_secret_ok")
         end
       elsif SiteSetting.cnkd_login_client_secret.blank?
         error(
@@ -76,7 +76,7 @@ module ::DiscourseCnkdLogin
           :"cnkd_login.check.confidential_app_missing_secret",
         )
       else
-        ok(:"cnkd_login.check.confidential_app_secret_ok")
+        ok(:confidential_app_secret_ok, :"cnkd_login.check.confidential_app_secret_ok")
       end
     end
 
@@ -89,7 +89,7 @@ module ::DiscourseCnkdLogin
           :"cnkd_login.check.pkce_forced",
         )
       elsif SiteSetting.cnkd_login_enable_pkce
-        ok(:"cnkd_login.check.pkce_ok")
+        ok(:pkce_ok, :"cnkd_login.check.pkce_ok")
       else
         warning(
           :pkce_disabled,
@@ -133,7 +133,7 @@ module ::DiscourseCnkdLogin
         )
       end
 
-      ok(:"cnkd_login.check.site_url_ok", detail: normalized)
+      ok(:site_url_ok, :"cnkd_login.check.site_url_ok", detail: normalized)
     end
 
     # 文档 6.2：敏感 scope 仅 ownerType=cnkd_internal 且 trustedLevel>=4 可申请。
@@ -144,7 +144,7 @@ module ::DiscourseCnkdLogin
       sensitive << "qq.summary" if SiteSetting.cnkd_login_request_qq_summary
 
       if sensitive.empty?
-        ok(:"cnkd_login.check.scope_ok")
+        ok(:scope_ok, :"cnkd_login.check.scope_ok")
       else
         warning(
           :sensitive_scopes_enabled,
@@ -172,9 +172,13 @@ module ::DiscourseCnkdLogin
     end
 
     # ---------------------------------------------------------------- 构造器
-
-    def self.ok(message, detail: nil)
-      { id: message, level: OK, message: message, detail: detail }
+    #
+    # id 与 message 是两个不同的东西，不要混用：
+    #   id      —— 稳定的机器标识（稳定不改，用于日志检索与前端 keyed each）
+    #   message —— i18n key（前端 i18n() / 日志里翻译成中文）
+    # 三者签名保持一致，避免「ok 的 id 被写成 i18n key」这类不一致。
+    def self.ok(id, message, detail: nil)
+      { id: id, level: OK, message: message, detail: detail }
     end
 
     def self.warning(id, message, detail: nil)

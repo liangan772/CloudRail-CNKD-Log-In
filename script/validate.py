@@ -381,6 +381,58 @@ def check_plugin_load_safety():
     notes.append("plugin.rb 迁移期加载安全（无 JS/hbs 注册、无顶层控制器）")
 
 
+def check_health_check_ids():
+    """health_check.rb 里 ok/warning/error 的 id 与 message 必须是两个不同的东西：
+        id      —— 稳定机器标识（短符号，无点）
+        message —— i18n key（字符串/符号，含点，形如 cnkd_login.check.xxx）
+
+    这条检查来自一次真实疏漏：早期 ok() 只收一个参数，写成
+        ok(:"cnkd_login.check.client_id_ok")
+    于是 id 被塞进了 i18n key，与 warning/error 的签名不一致
+    （plugin.rb 的启动日志会把 id 打出来，日志里因此出现一长串 key）。
+    """
+    src = (ROOT / "lib/cnkd/health_check.rb").read_text(encoding="utf-8")
+
+    # 只看调用点，不看定义（def self.ok(...) 里是形参）
+    src = re.sub(r"def\s+self\.(?:ok|warning|error)\([^)]*\)", "", src)
+
+    call_re = re.compile(
+        r"\b(ok|warning|error)\(\s*(:[A-Za-z0-9_]+|\"[^\"]+\"|'[^']+')"
+        r"(?:\s*,\s*(:[A-Za-z0-9_]+|\"[^\"]+\"|'[^']+'))?"
+    )
+    issues = []
+    for m in call_re.finditer(src):
+        kind = m.group(1)
+        first = m.group(2)
+        # 第一个实参必须是「短符号 id」：以 : 开头且不含点
+        if not first.startswith(":"):
+            issues.append(f"{kind} 的第一个参数应是 id 符号，实际为 {first}")
+            continue
+        if "." in first:
+            issues.append(
+                f"{kind}({first}) 的第一参数看起来是 i18n key，"
+                "id 应是稳定短标识（不含点），i18n key 放第二个参数"
+            )
+
+    if issues:
+        for i in issues:
+            fail(f"health_check.rb：{i}")
+    else:
+        notes.append("health_check.rb 的 ok/warning/error 均使用 id + message 双参数")
+
+
+def check_preview_keys(client_keys):
+    """preview_renderer.rb 里的 title/subtitle/note 必须是 i18n key，
+    且在 client.*.yml（js. 前缀下）存在。"""
+    src = (ROOT / "lib/cnkd/preview_renderer.rb").read_text(encoding="utf-8")
+    keys = set(re.findall(r'(?:title|subtitle|note):\s*:"([\w.]+)"', src))
+    missing = [k for k in sorted(keys) if f"js.{k}" not in client_keys]
+    if missing:
+        fail(f"preview_renderer 引用了不存在的预览文案 key: {missing}")
+    else:
+        notes.append(f"握手预览的 {len(keys)} 个文案 key 全部存在")
+
+
 def check_admin_page_layout():
     """检查后台页面文件是否遵循官方目录约定。
 
@@ -441,9 +493,11 @@ def main():
     check_plugin_load_safety()
     check_admin_page_layout()
     check_route_map_consistency()
+    check_health_check_ids()
     client_keys, server_keys = check_locale_symmetry()
     check_referenced_keys(client_keys, server_keys)
     check_template_keys(client_keys)
+    check_preview_keys(client_keys)
 
     print("=" * 62)
     for n in notes:
