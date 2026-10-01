@@ -1,0 +1,10 @@
+en:
+  js:
+    login:
+      cnkd:
+        name: "CNKD OnePass"
+        title: "Log in with CNKD OnePass"
+    admin:
+      site_settings:
+        categories:
+          discourse_cnkd_login: "CNKD OnePass Login"

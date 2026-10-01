@@ -1,0 +1,10 @@
+zh_CN:
+  js:
+    login:
+      cnkd:
+        name: "CNKD 一证通行"
+        title: "使用 CNKD 一证通行登录"
+    admin:
+      site_settings:
+        categories:
+          discourse_cnkd_login: "CNKD 一证通行登录"

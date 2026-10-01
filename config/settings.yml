@@ -1,0 +1,61 @@
+# CNKD 一证通行登录插件配置
+#
+# 所有设置以 cnkd_login_ 开头，这样 /admin/plugins 的「设置」按钮能正确跳转。
+cnkd_login:
+  # ---- 总开关 ----
+  cnkd_login_enabled:
+    default: false
+    client: true
+
+  # ---- 应用凭据（由 CNKD 平台在审核通过后分配） ----
+  cnkd_login_client_id:
+    default: ""
+    client: true
+
+  # public 应用不填；confidential 应用仅保存在服务端（secret: true 使其不回传前端）
+  cnkd_login_client_secret:
+    default: ""
+    secret: true
+
+  cnkd_login_client_type:
+    default: "confidential"
+    type: enum
+    choices:
+      - public
+      - confidential
+    client: true
+
+  # public 应用强制 S256 PKCE；confidential 应用建议一并开启
+  cnkd_login_enable_pkce:
+    default: true
+
+  # ---- 平台地址（私有化部署或联调环境时修改） ----
+  cnkd_login_site_url:
+    default: "https://cloud.cnkd.fun"
+    client: true
+
+  # ---- 界面 ----
+  cnkd_login_button_title:
+    default: "CNKD 一证通行"
+    client: true
+
+  # ---- 授权的 scope ----
+  # 基础资料与账号状态对所有合作方开放（文档 6.2），默认始终申请。
+  #
+  # 以下两项属敏感范围，仅 ownerType=cnkd_internal 且 trustedLevel>=4 的
+  # CNKD 自有应用可申请；外部合作方开启会导致授权被平台拒绝。
+  cnkd_login_request_email_verified:
+    default: false
+
+  cnkd_login_request_qq_summary:
+    default: false
+
+  # ---- 安全 / 运维 ----
+  # 记录平台错误详情与 requestId（不含任何令牌原文），便于对 CNKD 报障
+  cnkd_login_verbose_logging:
+    default: true
+
+  # 邮箱未验证时是否拒绝登录。CNKD 侧门禁已强制验证，
+  # 此开关作为本地二次防御，仅在能拿到 email 原文时生效。
+  cnkd_login_require_verified_email:
+    default: false
