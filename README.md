@@ -191,19 +191,26 @@ LOAD_PLUGINS=1 bundle exec rspec plugins/discourse-cnkd-login/spec/plugin_spec.r
 ```
 discourse-cnkd-login/
 ├── plugin.rb                                  # 插件清单与注册
+├── admin/assets/javascripts/discourse/templates/
+│   └── admin-plugins/show/cnkd-login/
+│       └── index.gjs                          # 后台页面（.gjs，模板 + 控制器合一）
 ├── app/controllers/discourse_cnkd_login/
 │   └── admin_controller.rb                    # 后台数据接口（自检 + 预览）
 ├── assets/
 │   ├── javascripts/discourse/
-│   │   ├── cnkd-login-route-map.js            # admin 路由映射
-│   │   ├── controllers/admin-plugins-cnkd-login.js
-│   │   └── templates/admin/plugins-cnkd-login.hbs
+│   │   ├── admin-cnkd-login-plugin-route-map.js
+│   │   │                                      # 路由映射（挂 admin.adminPlugins.show）
+│   │   └── initializers/
+│   │       └── cnkd-login-admin-plugin-configuration-nav.js
+│   │                                          # 顶部标签导航（仅管理员）
 │   └── stylesheets/common/cnkd-login-admin.scss
 ├── config/
 │   ├── settings.yml                           # 站点设置
 │   └── locales/
 │       ├── server.en.yml / server.zh_CN.yml    # 错误文案（可本地化）
 │       └── client.en.yml / client.zh_CN.yml    # 登录按钮 + 后台页面文案
+├── docs/
+│   └── plugin-admin-interfaces.reference.md   # 官方后台界面约定（存档备查）
 ├── lib/
 │   ├── omniauth/strategies/cnkd.rb            # OAuth2 策略（JSON 信封适配）
 │   └── cnkd/
@@ -217,9 +224,44 @@ discourse-cnkd-login/
 └── script/validate.py                         # 无 Ruby 环境下的静态校验
 ```
 
-> 前端目录严格遵循官方约定（[developer-docs · Admin interface](https://github.com/discourse/discourse-developer-docs/blob/main/docs/04-plugins/05-admin-interface.md)）。
-> 三处命名必须一致，改一处就要改另外两处：
-> `add_admin_route` 的路由名 → `this.route(...)` → 控制器/模板文件名。
+> 前端目录遵循官方后台界面约定（存档于
+> `docs/plugin-admin-interfaces.reference.md`）。四处命名必须一致，
+> 改一处就要改另外三处：
+> `plugin.rb` 里 `add_admin_route` 的路由名 → `this.route(...)` →
+> `templates/admin-plugins/show/<路由名>/` 目录名 →
+> 顶部导航里的 `route: "adminPlugins.show.<路由名>"`。
+
+### 关于 `.gjs`（重要）
+
+本插件**不使用 `.hbs`**，后台页面是 `.gjs`（Glimmer 模板标签格式）。
+
+Discourse 自 2026.3 起弃用 `.hbs`（主题与插件），2026.7 ESR 是最后一个
+支持它的版本，2026.8.0-latest 起计划移除；残留 `.hbs` 会给管理员弹出
+警告横幅。官方公告：
+<https://meta.discourse.org/t/deprecating-hbs-file-extension-in-themes-and-plugins/398896>
+
+`.gjs` 与 `.hbs` 的**三个关键差异**（迁移时最容易踩的坑）：
+
+| 差异 | `.hbs`（旧） | `.gjs`（新） |
+| --- | --- | --- |
+| 组件解析 | 全局，直接用 `<DButton />` | **必须显式 import** |
+| 属性引用 | 可写裸 `{{status}}` | 严格模式，必须 `{{this.status}}` |
+| action | `{{action "foo"}}` 字符串 | `{{this.foo}}` / `{{on "click" this.foo}}` |
+
+核心组件走 ui-kit 路径：
+
+```js
+import DButton from "discourse/ui-kit/d-button";
+import DPageSubheader from "discourse/ui-kit/d-page-subheader";
+import dIcon from "discourse/ui-kit/helpers/d-icon";
+```
+
+`script/validate.py` 里有专门的检查守住这三条（禁止 `.hbs` 残留、
+组件必须已 import、禁止字符串 action、模板内属性必须带 `this.`）。
+
+> 官方 codemod（`pnpm dlx https://github.com/discourse/discourse-gjs-codemod`）
+> 可自动完成大部分转换，但边角仍需人工核对 —— 这也是校验脚本存在的原因。
+
 
 ---
 
@@ -311,14 +353,57 @@ CNKD 后台登记值，通常比翻设置页快得多。
 报障时请提供 CNKD 返回的 `requestId` —— 插件已把它写入日志
 （`cnkd_login_verbose_logging` 开启时）。
 
-### 7.4 静态校验（无需 Ruby 环境）
+### 7.4 后台出现「已弃用」警告横幅（`.hbs`）
+
+如果管理员看到类似这样的横幅：
+
+> This plugin uses deprecated `.hbs` files…
+
+说明插件里还有 `.hbs` 没迁到 `.gjs`。本插件**已经全部迁移完毕**，
+正常不会出现；如果出现，多半是：
+
+1. 服务器上的插件代码是旧版本 —— `git pull` 后重新 `./launcher rebuild app`；
+2. 本插件与其他插件混装，横幅指的是别的插件（逐条看横幅里的插件名）。
+
+自行检查本插件有无残留：
+
+```bash
+find plugins/discourse-cnkd-login -name "*.hbs"
+# 应当没有任何输出
+```
+
+迁移方法见第 6 节「关于 `.gjs`」；官方公告：
+<https://meta.discourse.org/t/deprecating-hbs-file-extension-in-themes-and-plugins/398896>
+
+### 7.5 后台页面空白或报「组件未定义」
+
+`.gjs` 是严格模式，**用到的组件必须显式 import**（`.hbs` 时代是全局解析）。
+如果页面报 `DButton is not defined` 之类，检查 `.gjs` 顶部的 import 段。
+
+核心组件路径走 ui-kit：
+
+```js
+import DButton from "discourse/ui-kit/d-button";
+import DPageSubheader from "discourse/ui-kit/d-page-subheader";
+import dIcon from "discourse/ui-kit/helpers/d-icon";
+```
+
+`script/validate.py` 可离线查出这类问题（无需浏览器）。
+
+### 7.6 静态校验（无需 Ruby 环境）
 
 ```bash
 python3 script/validate.py
 ```
 
-校验 YAML 可解析性、i18n key 的中英对称性、Ruby 括号配平，
-以及代码/模板引用的 i18n key 是否真实存在。
+校验内容：
+
+- YAML 可解析性、i18n key 的中英对称性、Ruby 括号配平
+- 代码/模板引用的 i18n key 是否真实存在
+- `plugin.rb` 迁移期加载安全（禁止 `register_asset` JS/hbs、禁止顶层控制器）
+- 后台页面布局符合官方约定（route map 挂 `.show`、模板为 `.gjs`）
+- **禁止任何 `.hbs` 残留**
+- `.gjs` 严格模式：组件必须已 import、禁止字符串 action、属性必须带 `this.`
 
 ## License
 

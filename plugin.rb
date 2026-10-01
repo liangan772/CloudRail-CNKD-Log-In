@@ -28,11 +28,21 @@ enabled_site_setting :cnkd_login_enabled
 # 结论：assets/javascripts/** 与 assets/stylesheets/** 都由构建系统按
 # 目录约定自动收录，plugin.rb 里不需要、也不应该注册它们。
 #
-# 前端文件布局（全部遵循官方约定，见 developer-docs 04-plugins/05）：
-#   assets/javascripts/discourse/cnkd-login-route-map.js         路由映射
-#   assets/javascripts/discourse/controllers/admin-plugins-cnkd-login.js
-#   assets/javascripts/discourse/templates/admin/plugins-cnkd-login.hbs
+# 前端文件布局（全部遵循官方约定，见 admin-interface 参考文档）：
+#   assets/javascripts/discourse/admin-cnkd-login-plugin-route-map.js
+#                                       —— 路由映射（resource 必须带 .show）
+#   assets/javascripts/discourse/initializers/
+#       cnkd-login-admin-plugin-configuration-nav.js
+#                                       —— 顶部标签导航注册（仅管理员）
+#   admin/assets/javascripts/discourse/templates/
+#       admin-plugins/show/cnkd-login/index.gjs
+#                                       —— 页面本体（.gjs，模板 + 控制器合一）
 #   assets/stylesheets/common/cnkd-login-admin.scss
+#
+# 关于 .gjs：Discourse 自 2026.3 起弃用 .hbs（主题与插件），
+# 2026.7 ESR 是最后一个支持 .hbs 的版本，2026.8.0-latest 起计划移除。
+# 本插件已全面使用 .gjs，不再有任何 .hbs 文件。
+# 详见 https://meta.discourse.org/t/398896
 #
 # 客户端 i18n 由 config/locales/client.*.yml 提供，
 # 键挂在 js.login.cnkd.* 与 js.cnkd_login.* 下。
@@ -187,8 +197,21 @@ auth_provider authenticator: DiscourseCnkdLogin::Authenticator.new
 # 这个 key 会在 /admin/plugins 插件列表里作为「设置」链接的标题显示。
 #
 # 第二个参数是前端路由名，必须与 route-map 里的
-# `this.route("cnkd-login")` 以及模板名 plugins-cnkd-login.hbs 严格对应。
-add_admin_route "cnkd_login.admin.title", "cnkd-login"
+# `this.route("cnkd-login")` 以及模板目录 cnkd-login/ 严格对应。
+#
+# ⚠️ use_new_show_route: true 是关键，不能省。
+#
+# 它让 Discourse 把 full_location 从 adminPlugins.<location> 改成
+# adminPlugins.show —— 即核心的**共享 show 路由**（源码见
+# lib/plugin/instance.rb 的 full_admin_route）：
+#     path = admin_route[:use_new_show_route] ? "show" : admin_route[:location]
+#     admin_route[:full_location] = "adminPlugins.#{path}"
+#
+# 共享 show 路由负责渲染外层 DPageHeader 与顶部标签导航，
+# 插件只需提供各标签对应的页面（.gjs）。核心给「有设置但没显式声明路由」
+# 的插件自动生成的 default_admin_route **同样**用了 use_new_show_route: true，
+# 所以这是当前的标准做法。
+add_admin_route "cnkd_login.admin.title", "cnkd-login", { use_new_show_route: true }
 
 # 服务端路由。
 #

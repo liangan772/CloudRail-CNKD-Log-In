@@ -527,6 +527,12 @@ RSpec.describe DiscourseCnkdLogin do
       )
     end
 
+    # 没有这个选项，插件就不会挂到共享的 adminPlugins.show 路由上，
+    # 也就拿不到外层的 DPageHeader 与顶部标签导航。
+    it "add_admin_route 带 use_new_show_route: true" do
+      expect(plugin_source).to match(/use_new_show_route:\s*true/)
+    end
+
     it "注册了服务端页面路由，避免直接访问 404" do
       expect(plugin_source).to include(
         'get "/admin/plugins/cnkd-login" => "admin/plugins#index"',
@@ -545,38 +551,64 @@ RSpec.describe DiscourseCnkdLogin do
 
     # ------------------------------------------------------ 前端文件布局
 
-    # 布局遵循官方 developer-docs 04-plugins/05-admin-interface.md
+    # 布局遵循官方 admin 参考文档（docs/plugin-admin-interfaces.reference.md）。
+    # 注意：旧的 templates/admin/plugins-<name>.hbs 布局已随 .hbs 弃用而淘汰。
     describe "前端文件布局" do
       let(:root) { File.expand_path("..", __dir__) }
-
-      it "route map 放在 assets/javascripts/discourse/ 下且以 -route-map.js 结尾" do
-        expect(File.exist?(File.join(root, "assets/javascripts/discourse/cnkd-login-route-map.js"))).to eq(true)
+      let(:route_map) do
+        File.join(root, "assets/javascripts/discourse/admin-cnkd-login-plugin-route-map.js")
       end
 
-      it "route map 声明了 admin.adminPlugins 下的 cnkd-login 路由" do
-        src = File.read(File.join(root, "assets/javascripts/discourse/cnkd-login-route-map.js"))
-        expect(src).to include('resource: "admin.adminPlugins"')
+      it "route map 放在 assets/javascripts/discourse/ 下" do
+        expect(File.exist?(route_map)).to eq(true)
+      end
+
+      it "route map 挂在 admin.adminPlugins.show 下声明 cnkd-login 路由" do
+        src = File.read(route_map)
+        # resource 必须带 .show —— 与 use_new_show_route: true 配套
+        expect(src).to include('resource: "admin.adminPlugins.show"')
         expect(src).to include('this.route("cnkd-login")')
       end
 
-      it "控制器命名为 admin-plugins-cnkd-login（与路由名对应）" do
+      it "页面模板是 .gjs，放在 templates/admin-plugins/show/cnkd-login/ 下" do
         expect(
           File.exist?(
-            File.join(root, "assets/javascripts/discourse/controllers/admin-plugins-cnkd-login.js"),
+            File.join(
+              root,
+              "admin/assets/javascripts/discourse/templates/admin-plugins/show/cnkd-login/index.gjs",
+            ),
           ),
         ).to eq(true)
       end
 
-      it "模板放在 templates/admin/ 下且命名为 plugins-cnkd-login.hbs" do
-        expect(
-          File.exist?(
-            File.join(root, "assets/javascripts/discourse/templates/admin/plugins-cnkd-login.hbs"),
-          ),
-        ).to eq(true)
+      it "注册了仅管理员的顶部标签导航" do
+        nav =
+          File.join(
+            root,
+            "assets/javascripts/discourse/initializers/cnkd-login-admin-plugin-configuration-nav.js",
+          )
+        expect(File.exist?(nav)).to eq(true)
+        src = File.read(nav)
+        expect(src).to include("addAdminPluginConfigurationNav")
+        expect(src).to include("currentUser?.admin")
       end
 
-      it "不再残留旧的 admin/ 目录布局" do
-        expect(File.exist?(File.join(root, "assets/javascripts/discourse/admin"))).to eq(false)
+      # .hbs 自 2026.3 起弃用，2026.6.8-latest 起会给管理员弹警告横幅，
+      # 2026.7 ESR 是最后一个支持它的版本。这里硬性禁止残留。
+      it "仓库里没有任何 .hbs 文件" do
+        leftovers = Dir.glob(File.join(root, "**/*.hbs"))
+        expect(leftovers).to eq([])
+      end
+
+      it "不再残留旧的控制器 / 模板路径" do
+        [
+          "assets/javascripts/discourse/controllers/admin-plugins-cnkd-login.js",
+          "assets/javascripts/discourse/templates/admin/plugins-cnkd-login.hbs",
+          "assets/javascripts/discourse/cnkd-login-route-map.js",
+          "assets/javascripts/discourse/admin",
+        ].each do |rel|
+          expect(File.exist?(File.join(root, rel))).to eq(false)
+        end
       end
     end
 
@@ -603,16 +635,72 @@ RSpec.describe DiscourseCnkdLogin do
       template =
         File.read(
           File.expand_path(
-            "../assets/javascripts/discourse/templates/admin/plugins-cnkd-login.hbs",
+            "../admin/assets/javascripts/discourse/templates/" \
+              "admin-plugins/show/cnkd-login/index.gjs",
             __dir__,
           ),
         )
       keys = template.scan(/\{\{i18n\s+"([a-z0-9_.]+)"/).flatten
-      keys |= template.scan(/@label="([a-z0-9_.]+)"/).flatten
+      keys |= template.scan(/@?(?:title|description|label)Label="([a-z0-9_.]+)"/).flatten
 
       expect(keys).not_to be_empty
       keys.each do |key|
         expect(I18n.t("js.#{key}")).not_to include("translation missing")
+      end
+    end
+
+    # ------------------------------------------------------ .gjs 严格模式
+
+    # .hbs → .gjs 迁移最容易踩的三类坑。这些在 .hbs 里都合法，
+    # 在 .gjs 严格模式下会直接编译失败，所以逐条守住。
+    describe ".gjs 严格模式" do
+      let(:gjs) do
+        File.read(
+          File.expand_path(
+            "../admin/assets/javascripts/discourse/templates/" \
+              "admin-plugins/show/cnkd-login/index.gjs",
+            __dir__,
+          ),
+        )
+      end
+
+      it "包含 <template> 标签块" do
+        expect(gjs).to include("<template>")
+        expect(gjs).to include("</template>")
+      end
+
+      # .gjs 不再有全局组件解析，用到的组件必须显式 import
+      it "显式 import 了用到的核心组件" do
+        %w[
+          discourse/ui-kit/d-button
+          discourse/ui-kit/d-page-subheader
+          discourse/ui-kit/helpers/d-icon
+        ].each do |path|
+          expect(gjs).to include(%(from "#{path}"))
+        end
+      end
+
+      # .gjs 严格模式：不能用字符串 action
+      it "没有字符串形式的 action" do
+        expect(gjs).not_to match(/\{\{action\s+"/)
+      end
+
+      # 模板里引用控制器属性必须带 this.
+      it "模板内属性访问都带 this. 前缀" do
+        template = gjs.split("<template>", 1).last
+        # 排除块参数（as |x|）与关键字
+        block_params = template.scan(/as\s+\|([^|]+)\|/).flatten.join(" ").split
+        # 检查 {{#if ...}} 这类块条件里的裸标识符
+        bare =
+          template
+            .scan(/\{\{#(?:if|unless|each)\s+([A-Za-z_][\w.]*)/)
+            .flatten
+            .reject do |expr|
+              expr.start_with?("this.", "@") ||
+                %w[true false null].include?(expr) ||
+                block_params.include?(expr.split(".").first)
+            end
+        expect(bare).to eq([])
       end
     end
   end

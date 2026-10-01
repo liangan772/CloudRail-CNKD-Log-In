@@ -315,9 +315,12 @@ def check_referenced_keys(client_keys, server_keys):
 
 def check_template_keys(client_keys):
     """模板里 i18n "xxx" 与 JS 里 i18n("xxx") 用到的 key，
-    在 client.*.yml 里的真实路径是 js.<key>。"""
+    在 client.*.yml 里的真实路径是 js.<key>。
+
+    模板已从 .hbs 迁移到 .gjs，所以这里扫描 .gjs（以及 .js）。"""
     used = set()
-    for f in list(ROOT.rglob("*.hbs")) + list(ROOT.rglob("*.js")):
+    files = list(ROOT.rglob("*.gjs")) + list(ROOT.rglob("*.js")) + list(ROOT.rglob("*.hbs"))
+    for f in files:
         if "node_modules" in str(f):
             continue
         src = f.read_text(encoding="utf-8")
@@ -327,9 +330,11 @@ def check_template_keys(client_keys):
         # 模板里的 {{i18n "a.b.c"}}
         used |= set(re.findall(r'\{\{i18n\s+"([a-z0-9_.]+)"', src))
         # @label="a.b.c" / label="a.b.c"
-        used |= set(re.findall(r'@label="([a-z0-9_.]+)"', src))
+        used |= set(re.findall(r'@?label(?:Label)?="([a-z0-9_.]+)"', src))
         # 模板里的多行 i18n 调用（{{i18n "x" 换行续参）
         used |= set(re.findall(r'i18n "([a-z0-9_.]+)"', src))
+        # gjs 模板里的裸 key 参数（如 @descriptionLabel="a.b.c"）
+        used |= set(re.findall(r'@?\w*Label="([a-z0-9_.]+)"', src))
 
     # 这些是「运行时才决定 key」的动态引用，静态扫描看不到具体值，
     # 已由 check_referenced_keys 单独校验，这里跳过。
@@ -345,6 +350,195 @@ def check_template_keys(client_keys):
         fail(f"前端引用了不存在的客户端 i18n key: {missing}")
     else:
         notes.append(f"前端引用的 {len(used - dynamic)} 个 key 全部存在")
+
+
+def check_gjs_strict_mode():
+    """`.gjs` 模板是**严格模式**，与 .hbs 的宽松解析有语法差异：
+
+      · 组件 / helper 必须**显式 import**（.hbs 里是全局解析）。
+        未 import 的大写组件标签在 .gjs 里会直接编译失败。
+      · 模板内引用控制器属性必须显式写 `this.`。
+      · 不能再用字符串 action `{{action "foo"}}`，应为 `{{this.foo}}` 或
+        `{{on "click" this.foo}}`。
+      · 每个 .gjs 应当有一个 <template> 标签块。
+
+    这条检查守住迁移正确性 —— codemod 覆盖不到的边角最容易在这里出错。
+    """
+    gjs_files = [
+        f
+        for f in ROOT.rglob("*.gjs")
+        if "node_modules" not in str(f) and ".git" not in f.parts
+    ]
+    if not gjs_files:
+        return
+
+    # 无需 import 的内置标签 / 全局组件（保留字或核心始终可用的）
+    BUILTIN = {
+        "template",
+        "let",
+        "if",
+        "each",
+        "in-element",
+        "link-to",
+        "textarea",
+        "input",
+        "select",
+        "option",
+        "form",
+        "button",
+        "table",
+        "thead",
+        "tbody",
+        "tr",
+        "td",
+        "th",
+        "div",
+        "span",
+        "pre",
+        "code",
+        "br",
+        "label",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "p",
+        "ul",
+        "ol",
+        "li",
+        "a",
+        "img",
+        "nav",
+        "section",
+        "article",
+        "header",
+        "footer",
+        # 全局 helper / 概念，不需要 import
+        # ⚠️ 不要往这里加 loading-spinner 之类的组件 ——
+        # .gjs 严格模式下它们**必须 import**，放进来会让检查形同虚设。
+        "outlet",
+        "yield",
+        "component",
+        "concat",
+        # 语言关键字与内置 helper：出现在 {{...}} 里但不是模块标识符
+        "else",
+        "this",
+        "not",
+        "and",
+        "or",
+        "eq",
+        "ne",
+        "gt",
+        "gte",
+        "lt",
+        "lte",
+        "inc",
+        "dec",
+        "on",
+        "fn",
+        "hash",
+        "array",
+        "if",
+        "unless",
+        "each",
+        "let",
+        "with",
+        "in-element",
+        "mount",
+        "unique-id",
+        "get",
+        "concat",
+        "join",
+        "map-by",
+        "sort-by",
+        "filter-by",
+        "t",
+        "n",
+    }
+
+    for f in gjs_files:
+        rel = f.relative_to(ROOT)
+        src = f.read_text(encoding="utf-8")
+
+        if "<template>" not in src:
+            fail(f"{rel} 没有 <template> 标签块，不是合法的 .gjs 模板")
+            continue
+
+        # 收集 import 进来的标识符
+        imported = set()
+        for m in re.finditer(
+            r'^import\s+(?:\{([^}]+)\}|(\w+))(?:\s*,\s*\{([^}]+)\})?\s+from',
+            src,
+            re.M,
+        ):
+            names = []
+            for grp in (m.group(1), m.group(3)):
+                if grp:
+                    names += [n.strip().split(" as ")[-1] for n in grp.split(",")]
+            if m.group(2):
+                names.append(m.group(2))
+            imported |= {n for n in names if n}
+
+        tpl = src.split("<template>", 1)[1]
+
+        # 收集模板块里的块参数（{{#each xs as |a b|}} 里的 a b 是合法局部变量）
+        block_params = set()
+        for m in re.finditer(r"as\s+\|([^|]+)\|", tpl):
+            for name in m.group(1).split():
+                block_params.add(name.strip())
+
+        # 1) 大写开头的组件标签必须已 import
+        used_components = set(re.findall(r"<([A-Z][A-Za-z0-9]*)", tpl))
+        # 1b) 带连字符的小写标签（<loading-spinner /> / <d-button />）也必须是
+        #     已 import 的组件 —— .gjs 里它们不再是全局可用的。
+        #     纯 HTML 标签（div/span/pre…）在白名单里。
+        hyphen_tags = set(re.findall(r"<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)[\s/>]", tpl))
+        # 2) 花括号里的 helper 调用：{{foo ...}} / {{foo}}
+        used_helpers = set()
+        for m in re.finditer(r"\{\{\s*([a-zA-Z_][\w-]*)", tpl):
+            used_helpers.add(m.group(1))
+
+        missing = sorted(
+            (used_components | hyphen_tags | used_helpers)
+            - imported
+            - BUILTIN
+            - block_params
+        )
+        if missing:
+            fail(
+                f"{rel} 模板里用到但未 import 的组件/helper：{missing} —— "
+                ".gjs 严格模式要求显式 import（核心组件走 discourse/ui-kit/...）"
+            )
+
+        # 3) 字符串形式的 action：{{action "name"}} —— .gjs 不再支持。
+        #    先剥掉注释（{{! ... }} 与 // 行注释），否则文档里的示例代码会误报。
+        code = re.sub(r"\{\{!.*?\}\}", "", src, flags=re.S)
+        code = re.sub(r"^\s*//.*$", "", code, flags=re.M)
+        for m in re.finditer(r'\{\{action\s+"([^"]+)"', code):
+            fail(
+                f'{rel} 用了字符串 action {{{{action "{m.group(1)}"}}}} —— '
+                f".gjs 严格模式应改为 {{{{this.{m.group(1)}}}}}"
+            )
+
+        # 4) 模板块内未加 this. 的裸属性引用
+        suspicious = set()
+        for m in re.finditer(r"\{\{#(if|unless|each)\s+([A-Za-z_][\w.]*)", tpl):
+            expr = m.group(2)
+            root = expr.split(".")[0]
+            if expr.startswith(("this.", "@")) or expr in ("true", "false", "null"):
+                continue
+            if root in block_params:
+                continue
+            suspicious.add(expr)
+        if suspicious:
+            fail(
+                f"{rel} 模板里有未加 this. 的属性引用：{sorted(suspicious)} —— "
+                ".gjs 严格模式必须显式写 this."
+            )
+
+    notes.append(f".gjs 模板 {len(gjs_files)} 个通过严格模式与 import 检查")
 
 
 def check_plugin_load_safety():
@@ -436,10 +630,15 @@ def check_preview_keys(client_keys):
 def check_admin_page_layout():
     """检查后台页面文件是否遵循官方目录约定。
 
-    依据 discourse-developer-docs/docs/04-plugins/05-admin-interface.md：
-        assets/javascripts/discourse/<name>-route-map.js
-        assets/javascripts/discourse/controllers/admin-plugins-<name>.js
-        assets/javascripts/discourse/templates/admin/plugins-<name>.hbs
+    依据官方 admin 参考文档（docs/plugin-admin-interfaces.reference.md）：
+      · add_admin_route 必须带 use_new_show_route: true
+      · route map 挂在 admin.adminPlugins.show 下
+      · route map 放 assets/javascripts/discourse/
+      · 页面模板是 .gjs，放
+        admin/assets/javascripts/discourse/templates/admin-plugins/show/<route>/
+
+    ⚠️ 旧的 templates/admin/plugins-<name>.hbs 布局已随 .hbs 弃用而淘汰
+    （见 https://meta.discourse.org/t/398896），这里显式禁止。
     """
     src = (ROOT / "plugin.rb").read_text(encoding="utf-8")
 
@@ -449,40 +648,71 @@ def check_admin_page_layout():
         return  # 没注册后台页，跳过
     route_name = m.group(1)
 
+    # 1) use_new_show_route 必须是 true
+    if not re.search(r"use_new_show_route:\s*true", src):
+        fail(
+            "add_admin_route 缺少 use_new_show_route: true —— "
+            "没有它就不会挂到共享的 adminPlugins.show 路由上"
+        )
+
+    # 2) 必备文件
     expected = {
-        f"assets/javascripts/discourse/{route_name}-route-map.js": "route map",
-        f"assets/javascripts/discourse/controllers/admin-plugins-{route_name}.js": "控制器",
-        f"assets/javascripts/discourse/templates/admin/plugins-{route_name}.hbs": "模板",
+        f"assets/javascripts/discourse/admin-{route_name}-plugin-route-map.js": "route map",
+        f"admin/assets/javascripts/discourse/templates/"
+        f"admin-plugins/show/{route_name}/index.gjs": "页面模板（.gjs）",
     }
     for rel, label in expected.items():
         if not (ROOT / rel).is_file():
             fail(f"后台页面缺少{label}：{rel}")
 
-    # 旧布局残留检查
-    legacy = ROOT / "assets/javascripts/discourse/admin"
-    if legacy.is_dir():
-        fail("存在旧布局目录 assets/javascripts/discourse/admin/，应改用官方约定路径")
+    # 3) 禁止任何 .hbs 残留（弃用 + 会给管理员弹警告横幅）
+    hbs = [
+        f
+        for f in ROOT.rglob("*.hbs")
+        if ".git" not in f.parts and "node_modules" not in f.parts
+    ]
+    if hbs:
+        rel = ", ".join(str(f.relative_to(ROOT)) for f in hbs)
+        fail(f"存在 .hbs 文件（已弃用，须迁移为 .gjs）：{rel}")
 
-    notes.append(f"后台页面布局符合官方约定（路由名 {route_name}）")
+    # 4) 禁止旧的布局残留
+    legacy = [
+        ROOT / "assets/javascripts/discourse/admin",
+        ROOT / f"assets/javascripts/discourse/templates/admin/plugins-{route_name}.hbs",
+    ]
+    for path in legacy:
+        if path.exists():
+            fail(f"存在旧布局残留，应删除：{path.relative_to(ROOT)}")
+
+    notes.append(f"后台页面布局符合官方约定（路由名 {route_name}，无 .hbs）")
 
 
 def check_route_map_consistency():
-    """route map 里声明的路由名必须与 add_admin_route 一致。"""
+    """route map 里声明的路由名必须与 add_admin_route 一致，
+    且 resource 必须是带 .show 的共享路由。"""
     src = (ROOT / "plugin.rb").read_text(encoding="utf-8")
     m = re.search(r'add_admin_route\s+"[^"]+",\s*"([^"]+)"', src)
     if not m:
         return
     route_name = m.group(1)
 
-    map_file = ROOT / f"assets/javascripts/discourse/{route_name}-route-map.js"
+    map_file = ROOT / f"assets/javascripts/discourse/admin-{route_name}-plugin-route-map.js"
     if not map_file.is_file():
         return
 
     mapped = map_file.read_text(encoding="utf-8")
+
+    if 'resource: "admin.adminPlugins.show"' not in mapped:
+        fail(
+            f'route map 的 resource 必须是 "admin.adminPlugins.show"'
+            f"（与 use_new_show_route: true 配套），当前文件："
+            f"{map_file.relative_to(ROOT)}"
+        )
+
     if f'this.route("{route_name}")' not in mapped:
         fail(f"route map 里没有声明 this.route(\"{route_name}\")")
     else:
-        notes.append("route map 与 add_admin_route 的路由名一致")
+        notes.append("route map 与 add_admin_route 的路由名一致，且挂在共享 show 路由下")
 
 
 # ---------------------------------------------------------------- main
@@ -498,6 +728,7 @@ def main():
     check_referenced_keys(client_keys, server_keys)
     check_template_keys(client_keys)
     check_preview_keys(client_keys)
+    check_gjs_strict_mode()
 
     print("=" * 62)
     for n in notes:

@@ -7,6 +7,14 @@
 .cnkd-login-admin {
   max-width: 900px;
 
+  // 加载占位。用文字而不是 spinner 组件 —— .gjs 严格模式下
+  // 每个组件都要显式 import，为一行加载提示引入依赖不划算。
+  .cnkd-login-loading {
+    padding: 1em 0;
+    color: var(--primary-medium);
+    font-size: var(--font-down-1);
+  }
+
   .cnkd-login-admin__header {
     margin-bottom: 1.5em;
 
