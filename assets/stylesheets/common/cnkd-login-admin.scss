@@ -1,0 +1,373 @@
+// CNKD 一证通行 · 后台设置页面样式
+//
+// 全部走 Discourse 的 CSS 变量（--primary / --secondary / --tertiary 等），
+// 不写死颜色 —— 这样亮色 / 暗色主题、自定义配色方案都能自动适配。
+// 这也是本插件里唯一需要跟随主题的样式文件。
+
+.cnkd-login-admin {
+  max-width: 900px;
+
+  .cnkd-login-admin__header {
+    margin-bottom: 1.5em;
+
+    h2 {
+      margin-bottom: 0.25em;
+    }
+
+    p {
+      color: var(--primary-medium);
+      margin: 0;
+    }
+  }
+
+  // ------------------------------------------------------------ 状态总览
+
+  .cnkd-login-status {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75em;
+    padding: 0.85em 1em;
+    border-radius: var(--d-border-radius);
+    border: 1px solid var(--primary-low);
+    background: var(--primary-very-low);
+    margin-bottom: 1.5em;
+
+    &--ok {
+      border-color: var(--success-medium);
+      background: var(--success-low);
+    }
+
+    &--warning {
+      border-color: var(--tertiary-medium);
+      background: var(--tertiary-low);
+    }
+
+    &--error {
+      border-color: var(--danger-medium);
+      background: var(--danger-low);
+    }
+
+    .cnkd-login-status__icon {
+      flex: 0 0 auto;
+      margin-top: 0.15em;
+      font-size: var(--font-up-1);
+    }
+
+    .cnkd-login-status__body {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .cnkd-login-status__title {
+      font-weight: 600;
+      margin-bottom: 0.15em;
+    }
+
+    .cnkd-login-status__meta {
+      color: var(--primary-medium);
+      font-size: var(--font-down-1);
+    }
+  }
+
+  // ------------------------------------------------------------ 回调地址
+
+  .cnkd-login-callback {
+    margin-bottom: 1.5em;
+    padding: 1em;
+    border: 1px solid var(--primary-low);
+    border-radius: var(--d-border-radius);
+
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 0.35em;
+    }
+
+    .cnkd-login-callback__hint {
+      color: var(--primary-medium);
+      font-size: var(--font-down-1);
+      margin-bottom: 0.6em;
+    }
+
+    .cnkd-login-callback__row {
+      display: flex;
+      align-items: center;
+      gap: 0.5em;
+      flex-wrap: wrap;
+    }
+
+    // 回调地址最容易因为「看起来一样」而配错，所以用等宽字体呈现，
+    // 让末尾斜杠、大小写这类差异肉眼可辨。
+    code {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 0.5em 0.65em;
+      background: var(--primary-very-low);
+      border: 1px solid var(--primary-low);
+      border-radius: var(--d-border-radius);
+      font-family: var(--d-font-family--monospace);
+      font-size: var(--font-down-1);
+      word-break: break-all;
+      user-select: all;
+    }
+  }
+
+  // ------------------------------------------------------------ 自检清单
+
+  .cnkd-login-checks {
+    margin-bottom: 1.5em;
+
+    h3 {
+      margin-bottom: 0.6em;
+    }
+
+    .cnkd-login-check {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6em;
+      padding: 0.6em 0.75em;
+      border-radius: var(--d-border-radius);
+      border: 1px solid var(--primary-low);
+      margin-bottom: 0.4em;
+      background: var(--secondary);
+
+      &--ok {
+        border-left: 3px solid var(--success);
+      }
+
+      &--warning {
+        border-left: 3px solid var(--tertiary);
+      }
+
+      &--error {
+        border-left: 3px solid var(--danger);
+      }
+
+      .cnkd-login-check__icon {
+        flex: 0 0 auto;
+        margin-top: 0.15em;
+
+        .cnkd-login-check--ok & {
+          color: var(--success);
+        }
+        .cnkd-login-check--warning & {
+          color: var(--tertiary);
+        }
+        .cnkd-login-check--error & {
+          color: var(--danger);
+        }
+      }
+
+      .cnkd-login-check__body {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      // 检查项正文本身是 i18n 短句，detail 是具体值（地址、scope 列表等）
+      .cnkd-login-check__detail {
+        margin-top: 0.25em;
+        font-family: var(--d-font-family--monospace);
+        font-size: var(--font-down-1);
+        color: var(--primary-medium);
+        word-break: break-all;
+        user-select: all;
+      }
+    }
+  }
+
+  // ------------------------------------------------------------ 当前配置
+
+  .cnkd-login-settings {
+    margin-bottom: 1.5em;
+
+    h3 {
+      margin-bottom: 0.35em;
+    }
+
+    .cnkd-login-settings__intro {
+      color: var(--primary-medium);
+      font-size: var(--font-down-1);
+      margin-bottom: 0.8em;
+    }
+
+    .cnkd-login-settings__table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--font-down-1);
+
+      th {
+        text-align: left;
+        padding: 0.5em 0.65em;
+        border-bottom: 1px solid var(--primary-low);
+        color: var(--primary-medium);
+        font-weight: 600;
+      }
+
+      td {
+        padding: 0.45em 0.65em;
+        border-bottom: 1px solid var(--primary-very-low);
+        vertical-align: top;
+      }
+
+      // 设置名与值都用等宽字体，便于逐字符比对
+      code {
+        font-family: var(--d-font-family--monospace);
+        font-size: var(--font-down-1);
+        word-break: break-all;
+        user-select: all;
+      }
+
+      .cnkd-login-settings__value {
+        max-width: 26em;
+      }
+
+      .cnkd-login-settings__empty {
+        color: var(--primary-medium);
+        font-style: italic;
+      }
+
+      .cnkd-login-settings__badge {
+        display: inline-block;
+        padding: 0.1em 0.45em;
+        border-radius: var(--d-border-radius);
+        background: var(--tertiary-low);
+        color: var(--primary-high);
+        white-space: nowrap;
+
+        &--server {
+          background: var(--primary-low);
+          color: var(--primary-medium);
+        }
+      }
+    }
+  }
+
+  .cnkd-login-settings-link {
+    padding-top: 0.5em;
+  }
+
+  // ------------------------------------------------------------ 握手预览
+
+  .cnkd-login-preview {
+    h3 {
+      margin-bottom: 0.35em;
+    }
+
+    .cnkd-login-preview__intro {
+      color: var(--primary-medium);
+      font-size: var(--font-down-1);
+      margin-bottom: 0.8em;
+    }
+
+    .cnkd-login-step {
+      border: 1px solid var(--primary-low);
+      border-radius: var(--d-border-radius);
+      margin-bottom: 0.5em;
+      overflow: hidden;
+
+      .cnkd-login-step__head {
+        display: flex;
+        align-items: center;
+        gap: 0.6em;
+        width: 100%;
+        padding: 0.7em 0.9em;
+        background: var(--primary-very-low);
+        border: none;
+        text-align: left;
+        cursor: pointer;
+        color: var(--primary);
+
+        &:hover {
+          background: var(--primary-low);
+        }
+      }
+
+      .cnkd-login-step__index {
+        flex: 0 0 auto;
+        width: 1.6em;
+        height: 1.6em;
+        border-radius: 50%;
+        background: var(--tertiary);
+        color: var(--secondary);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: var(--font-down-1);
+        font-weight: 600;
+      }
+
+      .cnkd-login-step__titles {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .cnkd-login-step__title {
+        font-weight: 600;
+      }
+
+      .cnkd-login-step__subtitle {
+        color: var(--primary-medium);
+        font-size: var(--font-down-1);
+      }
+
+      // 方法 + 路径在同一行，便于和 CNKD 文档对照
+      .cnkd-login-step__method {
+        flex: 0 0 auto;
+        font-family: var(--d-font-family--monospace);
+        font-size: var(--font-down-2);
+        padding: 0.15em 0.4em;
+        border-radius: var(--d-border-radius);
+        background: var(--primary-medium);
+        color: var(--secondary);
+      }
+
+      .cnkd-login-step__body {
+        padding: 0.8em 0.9em;
+        border-top: 1px solid var(--primary-low);
+      }
+
+      .cnkd-login-step__section {
+        margin-bottom: 0.8em;
+
+        &:last-child {
+          margin-bottom: 0;
+        }
+
+        h5 {
+          font-size: var(--font-down-1);
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: var(--primary-medium);
+          margin-bottom: 0.3em;
+        }
+
+        pre {
+          margin: 0;
+          padding: 0.6em 0.75em;
+          background: var(--primary-very-low);
+          border: 1px solid var(--primary-low);
+          border-radius: var(--d-border-radius);
+          font-family: var(--d-font-family--monospace);
+          font-size: var(--font-down-1);
+          white-space: pre-wrap;
+          word-break: break-all;
+          max-height: 320px;
+          overflow: auto;
+        }
+
+        .cnkd-login-step__url {
+          user-select: all;
+        }
+      }
+
+      .cnkd-login-step__note {
+        margin-top: 0.6em;
+        padding: 0.5em 0.7em;
+        background: var(--tertiary-low);
+        border-radius: var(--d-border-radius);
+        font-size: var(--font-down-1);
+        color: var(--primary-high);
+      }
+    }
+  }
+}

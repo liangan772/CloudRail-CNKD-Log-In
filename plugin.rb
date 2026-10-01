@@ -11,6 +11,22 @@
 
 enabled_site_setting :cnkd_login_enabled
 
+# 后台设置页面的资源。
+#
+# Discourse 会自动收录 assets/javascripts/** 与 assets/stylesheets/** 下的
+# 文件，路径规则是 `assets/` 之后的部分，所以这里写的是相对 assets/ 的路径。
+#
+# 样式只在 admin 里用，但仍放 common/ —— 因为 admin 构建同样会读 common，
+# 而放 desktop/ 会导致移动端后台看不到样式。
+register_asset "stylesheets/common/cnkd-login-admin.scss"
+
+# 页面组件。type: :admin 让它只进 admin bundle，
+# 普通用户不会下载这段 JS。
+register_asset "javascripts/discourse/admin/cnkd-login.js", type: :admin
+
+# 客户端 i18n（登录按钮文案 + 后台页面文案）由 config/locales/client.*.yml
+# 提供，键挂在 js.login.cnkd.* 与 js.admin.cnkd_login.* 下。
+
 # CNKD 一证通行 · Discourse 登录插件
 #
 # 事实依据：
@@ -91,12 +107,43 @@ module ::DiscourseCnkdLogin
     scopes << SCOPE_QQ_SUMMARY if SiteSetting.cnkd_login_request_qq_summary
     scopes
   end
+
+  # 后台设置页面用到的全部设置名。
+  #
+  # 用白名单而不是 `SiteSetting.all_settings` 过滤前缀，是为了让
+  # 「页面上能改哪些设置」这件事一眼可查 —— 加新设置时如果忘了往这里补，
+  # spec 里的对称性测试会失败。
+  ADMIN_SETTING_KEYS = %w[
+    cnkd_login_enabled
+    cnkd_login_client_id
+    cnkd_login_client_secret
+    cnkd_login_client_type
+    cnkd_login_enable_pkce
+    cnkd_login_site_url
+    cnkd_login_button_title
+    cnkd_login_request_email_verified
+    cnkd_login_request_qq_summary
+    cnkd_login_verbose_logging
+    cnkd_login_require_verified_email
+  ].freeze
+
+  def self.admin_setting_keys
+    ADMIN_SETTING_KEYS
+  end
+
+  # 某个设置能否由客户端读取（client: true）。secret / 纯服务端开关
+  # 不会下发到前端，页面需要据此把它们渲染成只读或标记为「仅服务端可见」。
+  def self.client_visible_setting?(name)
+    SiteSetting.client_settings.include?(name.to_sym)
+  end
 end
 
 require_relative "lib/omniauth/strategies/cnkd"
 require_relative "lib/cnkd/account_matcher"
 require_relative "lib/cnkd/error_messages"
 require_relative "lib/cnkd/userinfo_client"
+require_relative "lib/cnkd/health_check"
+require_relative "lib/cnkd/preview_renderer"
 require_relative "lib/cnkd/authenticator"
 
 # 注册认证提供方。
@@ -123,6 +170,92 @@ require_relative "lib/cnkd/authenticator"
 # 标准 OmniAuth provider 应交给默认流程走 POST /auth/cnkd。
 auth_provider authenticator: DiscourseCnkdLogin::Authenticator.new
 
+# 后台设置界面入口。
+#
+# add_admin_route 会在 /admin/plugins 的插件列表里挂一个「设置」按钮，
+# 并注册前端路由 /admin/plugins/cnkd-login。注意必须放在顶层：
+# 它的实现依赖 Discourse::Application.routes.append，放在 after_initialize
+# 里虽然也能跑，但会让插件清单的「一次性注册」语义变模糊。
+#
+# 传的是域名（cnkd_login）而不是完整 key —— add_admin_route 内部会
+# 拼成 admin_js.admin.plugins.cnkd_login.title 去找翻译。
+#
+# use_new_show_route: true 是 Discourse 3.2+ 的新路由格式
+# （路由直接挂在 admin 命名空间下，不再需要 legacy 的 adminPlugins 包装）。
+add_admin_route("cnkd_login", "cnkd-login", use_new_show_route: true)
+
+# 自检 + 握手预览接口。
+#
+# 只读取站点设置、不发任何外网请求，因此没有 SSRF 面；
+# 响应里 client_secret 已被 PreviewRenderer 掩码，不会外泄原文。
+Discourse::Application.routes.append do
+  get "/cnkd-login/preview" => "discourse_cnkd_login/admin#preview"
+end
+
+module ::DiscourseCnkdLogin
+  # 挂在 /cnkd-login/preview。继承 Admin::AdminController 即完成鉴权，
+  # 无需自己写权限判断。
+  class AdminController < ::Admin::AdminController
+    # 插件被禁用时路由直接 404，与「设置不可见」的状态保持一致
+    requires_plugin DiscourseCnkdLogin::PLUGIN_NAME
+
+    def preview
+      checks = DiscourseCnkdLogin::HealthCheck.run
+
+      render_json_dump(
+        callback_url: DiscourseCnkdLogin.callback_url,
+        site_url: DiscourseCnkdLogin.site_url,
+        client_type: SiteSetting.cnkd_login_client_type,
+        pkce: DiscourseCnkdLogin::Authenticator.new.pkce_enabled?,
+        scopes: DiscourseCnkdLogin.requested_scopes,
+        configured: DiscourseCnkdLogin::HealthCheck.configured?,
+        healthy: !DiscourseCnkdLogin::HealthCheck.error?(checks),
+        checks: checks.map { |c| serialize_check(c) },
+        preview: DiscourseCnkdLogin::PreviewRenderer.steps,
+        settings: serialize_settings,
+      )
+    end
+
+    private
+
+    # 把 11 项设置的值一并发给页面，让管理员在这个页面上
+    # 就能看到「当前生效的值是多少」，不用来回跳转到站点设置。
+    #
+    # secret 类是唯一例外：SiteSetting 返回的是 "******" 占位符而不是原文
+    # （这是 Discourse 核心的行为），正合适 —— 页面只需要知道「填了没有」。
+    def serialize_settings
+      DiscourseCnkdLogin.admin_setting_keys.index_with do |key|
+        {
+          value: SiteSetting.public_send(key),
+          client_visible: DiscourseCnkdLogin.client_visible_setting?(key),
+        }
+      end
+    end
+
+    # message 是 i18n key，交给前端本地化 ——
+    # 同一份 check 数据也会被写进服务端日志，保持「后端产出 key、
+    # 展示层负责翻译」这条线不破，两边就不会各写一套文案。
+    def serialize_check(check)
+      {
+        id: check[:id],
+        level: check[:level],
+        message: check[:message],
+        detail: check[:detail],
+      }
+    end
+  end
+end
+
+# 后台设置页面的前端装配。
+#
+# 页面主体由 assets/javascripts/discourse/admin/templates/cnkd-login.hbs
+# 提供（Ember 原生模板），路由由上面的 add_admin_route 注册。
+#
+# 没有用 `withPluginApi("1.x")` + appEvents 的原因：
+#   插件初始化时会先做一次 setting snapshot，若在初始化**之前**就
+#   import 设置类，会污染 snapshot 里的默认值（官方 developer-guides
+#   明确警告过）。原生模板渲染天然避开这个坑。
+
 after_initialize do
   # 启动时做一次配置体检，把「能提前发现」的错误尽早暴露到日志里，
   # 而不是等用户点了登录按钮才报错。
@@ -130,26 +263,17 @@ after_initialize do
   # 注意：这里直接执行，不要挂到 DiscourseEvent 上。
   # DiscourseEvent.on 对未注册的事件名是静默接受的（不报错），
   # 但永远不会有对应的 trigger，等于死代码。
+  # （曾经踩过这个坑，spec 里有回归测试守着。）
   if SiteSetting.cnkd_login_enabled
-    authenticator = DiscourseCnkdLogin::Authenticator.new
+    health = DiscourseCnkdLogin::HealthCheck.run
 
-    if SiteSetting.cnkd_login_client_id.blank?
-      Rails.logger.warn(
-        "[#{DiscourseCnkdLogin::PLUGIN_NAME}] 已启用但未配置 cnkd_login_client_id",
-      )
-    end
-
-    if authenticator.public_client?
-      if SiteSetting.cnkd_login_client_secret.present?
+    if DiscourseCnkdLogin::HealthCheck.error?(health)
+      health.each do |check|
+        next unless check[:level] == DiscourseCnkdLogin::HealthCheck::ERROR
         Rails.logger.warn(
-          "[#{DiscourseCnkdLogin::PLUGIN_NAME}] client_type=public 时不应配置 " \
-            "client_secret，请清空",
+          "[#{DiscourseCnkdLogin::PLUGIN_NAME}] 配置错误 #{check[:id]} #{check[:detail]}",
         )
       end
-    elsif SiteSetting.cnkd_login_client_secret.blank?
-      Rails.logger.warn(
-        "[#{DiscourseCnkdLogin::PLUGIN_NAME}] client_type=confidential 但未配置 client_secret",
-      )
     end
 
     Rails.logger.info(

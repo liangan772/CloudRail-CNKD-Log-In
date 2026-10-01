@@ -8,3 +8,90 @@ en:
       site_settings:
         categories:
           discourse_cnkd_login: "CNKD OnePass Login"
+      # Strings for the admin settings page.
+      #
+      # Namespacing: client-side i18n lives under js.*, so
+      # i18n("cnkd_login.xxx") in the page resolves to js.cnkd_login.xxx.
+      # The domain is deliberately `cnkd_login` rather than
+      # `admin.cnkd_login` — the latter would sit alongside the route title
+      # js.admin.plugins.cnkd_login and risk key collisions.
+    cnkd_login:
+      page:
+        heading: "CNKD OnePass Login"
+        subheading: "Integration with CNKD OnePass (OAuth 2.0 authorization code + S256 PKCE). Use this page to verify the configuration and diagnose problems; the settings themselves live under Site Settings."
+        open_settings: "Open site settings"
+      status:
+        loading: "Reading configuration status…"
+        refresh: "Check again"
+        # Note: do not name a key yes / no / on / off / true / false —
+        # YAML 1.1 parses those as booleans and the i18n lookup misses.
+        label_yes: "yes"
+        label_no: "no"
+        ok: "Everything is configured. No issues found."
+        has_warnings: "Login works, but a few items are worth confirming."
+        has_errors: "There are configuration errors that must be fixed — login will not complete."
+        not_configured: "Login is not fully configured yet (a required setting is missing)."
+        summary: "Login ready: %{configured} · %{errors} error(s) · %{warnings} warning(s)"
+      callback:
+        label: "Callback URL (must be registered with CNKD)"
+        hint: "Submit the URL below to CNKD character for character. Any difference in scheme, host, case or trailing slash will be rejected."
+        copy: "Copy"
+        copied: "Copied"
+        unavailable: "Not available yet (set the site URL first)"
+      settings:
+        heading: "Current configuration"
+        intro: "The values below are the ones currently in effect. Use the button at the bottom to change them. Secret settings only show a placeholder and never return their value."
+        col:
+          setting: "Setting"
+          value: "Current value"
+          scope: "Visibility"
+        scope_client: "Client"
+        scope_server: "Server only"
+        empty_value: "(not set)"
+      checks:
+        heading: "Configuration checks"
+      preview:
+        heading: "Handshake preview"
+        intro: "Below is the payload generated from the current configuration (no real secrets or tokens, and no network request is made). When authorisation fails, compare these parameters against the values registered with CNKD."
+        field:
+          url: "Request URL"
+          headers: "Headers"
+          body: "Body / sample response"
+      # ---- Individual check strings ----
+      #
+      # Produced by lib/cnkd/health_check.rb as keys such as
+      # admin.cnkd_login.check.client_id_ok; the page translates them
+      # directly, so these must match the backend strings exactly.
+      check:
+        client_id_ok: "client_id is configured."
+        client_id_missing: "client_id is missing. Apply for an application with CNKD and fill it in, otherwise the login button will not appear."
+        public_app_secret_ok: "Application type is public and no secret is set — correct."
+        public_app_has_secret: "Application type is public but a secret is set. CNKD will reject it with “public apps must not have a secret”. Clear the field."
+        confidential_app_secret_ok: "Application type is confidential and a secret is set."
+        confidential_app_missing_secret: "Application type is confidential but no secret is set. CNKD will reject it with “invalid client secret”. Fill the field in."
+        pkce_ok: "PKCE (S256) is enabled."
+        pkce_forced: "Application type is public, so CNKD forces S256 PKCE. This toggle has no effect."
+        pkce_disabled: "PKCE is disabled. It is recommended for confidential apps; disabling it weakens security."
+        site_url_ok: "Site URL is correct."
+        site_url_blank: "Site URL is blank and will fall back to https://cloud.cnkd.fun."
+        site_url_not_https: "The site URL must use https. CNKD does not accept plain HTTP."
+        site_url_has_api_prefix: "The site URL contains an API path such as /api-control. Enter the site root only — the plugin appends the API paths itself."
+        site_url_trailing_slash: "The site URL has a redundant trailing slash. It is stripped at runtime, but it is cleaner to remove it."
+        scope_ok: "Only profile.basic and profile.status, which are open to partner apps, are requested."
+        sensitive_scopes_enabled: "Sensitive scopes are enabled. These are limited to CNKD-internal apps (ownerType=cnkd_internal with trustedLevel>=4); partner apps will be rejected."
+        callback_not_https: "The callback URL is not https; CNKD will not accept it."
+        callback_must_register: "The callback URL is well formed. Confirm that it has been registered with CNKD character for character — the plugin cannot verify this for you."
+      # ---- Per-step titles and notes for the handshake preview ----
+      step:
+        authorize:
+          title: "1. Redirect to the CNKD authorisation page"
+          subtitle: "A plain browser redirect; state and the PKCE challenge are generated here"
+          note: "Scope is space-separated. redirect_uri must match the token request character for character, otherwise CNKD reports a redirect URI mismatch."
+        token:
+          title: "2. Exchange the code for a token"
+          subtitle: "The biggest difference from standard OAuth 2.0: the body must be JSON"
+          note: "This endpoint only accepts application/json. Public apps must omit client_secret; confidential apps must include it. This logic is fully handled in lib/omniauth/strategies/cnkd.rb."
+        userinfo:
+          title: "3. Fetch the user profile"
+          subtitle: "The only trustworthy verification point; sub is the local account key"
+          note: "Tokens are opaque and cannot be parsed locally, so this endpoint is called every time. CNKD rate-limits it to 1200 requests / 10 minutes; the plugin caches successful results for 5 minutes."

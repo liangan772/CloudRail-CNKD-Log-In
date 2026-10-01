@@ -333,4 +333,189 @@ RSpec.describe DiscourseCnkdLogin do
       expect(provider_index).to be < after_init_index
     end
   end
+
+  # ------------------------------------------------------ 配置体检（HealthCheck）
+
+  describe "配置体检" do
+    it "client_id 为空时报错" do
+      SiteSetting.cnkd_login_client_id = ""
+      checks = DiscourseCnkdLogin::HealthCheck.run
+      ids = checks.map { |c| c[:id] }
+      expect(ids).to include(:client_id_missing)
+      expect(DiscourseCnkdLogin::HealthCheck.error?(checks)).to eq(true)
+    end
+
+    it "client_id 已配置时不再报该项错误" do
+      SiteSetting.cnkd_login_client_id = "cnkd_abc123"
+      checks = DiscourseCnkdLogin::HealthCheck.run
+      ids = checks.map { |c| c[:id] }
+      expect(ids).to include(:client_id_ok)
+    end
+
+    # public 应用不能带密钥：平台会报「公开应用不需要密钥」
+    it "public 应用配置了密钥时报错" do
+      SiteSetting.cnkd_login_client_type = "public"
+      SiteSetting.cnkd_login_client_secret = "should-not-be-here"
+      checks = DiscourseCnkdLogin::HealthCheck.run
+      expect(checks.map { |c| c[:id] }).to include(:public_app_has_secret)
+    end
+
+    # confidential 应用缺密钥：平台会报「生态应用密钥无效」
+    it "confidential 应用缺密钥时报错" do
+      SiteSetting.cnkd_login_client_type = "confidential"
+      SiteSetting.cnkd_login_client_secret = ""
+      checks = DiscourseCnkdLogin::HealthCheck.run
+      expect(checks.map { |c| c[:id] }).to include(:confidential_app_missing_secret)
+    end
+
+    # 常见的复制粘贴错误：把接口路径一起贴进站点地址
+    it "站点地址里混入 /api-control 时报错" do
+      SiteSetting.cnkd_login_site_url = "https://cloud.cnkd.fun/api-control"
+      checks = DiscourseCnkdLogin::HealthCheck.run
+      expect(checks.map { |c| c[:id] }).to include(:site_url_has_api_prefix)
+    end
+
+    it "站点地址不是 https 时报错" do
+      SiteSetting.cnkd_login_site_url = "http://cloud.cnkd.fun"
+      checks = DiscourseCnkdLogin::HealthCheck.run
+      expect(checks.map { |c| c[:id] }).to include(:site_url_not_https)
+    end
+
+    # 敏感 scope 只对外部合作方是「提醒」，不是错误 ——
+    # 因为 CNKD 自有应用确实可以用
+    it "开启敏感 scope 时给出提醒而非错误" do
+      SiteSetting.cnkd_login_request_email_verified = true
+      checks = DiscourseCnkdLogin::HealthCheck.run
+      check = checks.find { |c| c[:id] == :sensitive_scopes_enabled }
+      expect(check[:level]).to eq(DiscourseCnkdLogin::HealthCheck::WARNING)
+    end
+
+    # 回调地址始终带一条「需人工登记」的提醒，并附上完整地址
+    it "回调地址始终提示人工登记，并带出地址" do
+      checks = DiscourseCnkdLogin::HealthCheck.run
+      check = checks.find { |c| c[:id] == :callback_must_register }
+      expect(check[:level]).to eq(DiscourseCnkdLogin::HealthCheck::WARNING)
+      expect(check[:detail]).to end_with("/auth/cnkd/callback")
+    end
+
+    it "所有 check 的 message 都是 i18n key 且能解析出文案" do
+      checks = DiscourseCnkdLogin::HealthCheck.run
+      checks.each do |check|
+        key = check[:message].to_s
+        expect(key).to start_with("cnkd_login.")
+        expect(I18n.t("js.#{key}")).not_to include("translation missing")
+      end
+    end
+  end
+
+  # ------------------------------------------------------ 握手预览（PreviewRenderer）
+
+  describe "握手预览" do
+    let(:steps) { DiscourseCnkdLogin::PreviewRenderer.steps }
+
+    it "输出授权的三步：authorize / token / userinfo" do
+      expect(steps.map { |s| s[:step] }).to eq(%i[authorize token userinfo])
+    end
+
+    it "授权步骤生成完整 URL，含 scope 与 PKCE 参数" do
+      authorize = steps.find { |s| s[:step] == :authorize }
+      expect(authorize[:url]).to start_with("https://cloud.cnkd.fun/account/oauth/authorize?")
+      expect(authorize[:url]).to include("scope=profile.basic")
+      expect(authorize[:url]).to include("code_challenge_method=S256")
+    end
+
+    # 这是本插件与通用 OAuth2 的最大差异，必须在预览里体现
+    it "换令牌步骤标注为 JSON 请求体" do
+      token = steps.find { |s| s[:step] == :token }
+      expect(token[:method]).to eq("POST")
+      expect(token[:headers]["Content-Type"]).to eq("application/json")
+      expect(token[:body]).to include("\"grant_type\": \"authorization_code\"")
+    end
+
+    it "userinfo 步骤使用 Bearer 令牌" do
+      userinfo = steps.find { |s| s[:step] == :userinfo }
+      expect(userinfo[:headers]["Authorization"]).to eq("Bearer <access_token>")
+    end
+
+    # 预览可能被管理员截图外发，绝不能出现密钥原文
+    it "绝不泄露 client_secret 原文" do
+      SiteSetting.cnkd_login_client_type = "confidential"
+      SiteSetting.cnkd_login_client_secret = "SUPER_SECRET_VALUE_123"
+      rendered = steps.map { |s| [s[:url], s[:body], s[:headers]].compact.join }.join
+      expect(rendered).not_to include("SUPER_SECRET_VALUE_123")
+    end
+
+    # secret 已配置时只给掩码，让管理员知道「有值但看不到」
+    it "confidential 应用已配置密钥时展示掩码" do
+      SiteSetting.cnkd_login_client_type = "confidential"
+      SiteSetting.cnkd_login_client_secret = "SUPER_SECRET_VALUE_123"
+      token = DiscourseCnkdLogin::PreviewRenderer.steps.find { |s| s[:step] == :token }
+      expect(token[:body]).to include(DiscourseCnkdLogin::PreviewRenderer::MASKED)
+    end
+
+    it "所有 step 的 title / subtitle / note 都是可解析的 i18n key" do
+      steps.each do |step|
+        %i[title subtitle note].each do |field|
+          key = step[field]
+          next if key.nil?
+          expect(key.to_s).to start_with("cnkd_login.step.")
+          expect(I18n.t("js.#{key}")).not_to include("translation missing")
+        end
+      end
+    end
+  end
+
+  # --------------------------------------------------------- 后台设置页装配
+
+  describe "后台设置页装配" do
+    it "通过 add_admin_route 注册了 cnkd-login 页面" do
+      source = File.read(File.expand_path("../plugin.rb", __dir__))
+      expect(source).to include('add_admin_route("cnkd_login", "cnkd-login"')
+    end
+
+    it "管理接口挂在 /cnkd-login/preview" do
+      source = File.read(File.expand_path("../plugin.rb", __dir__))
+      expect(source).to include('get "/cnkd-login/preview"')
+    end
+
+    # 管理接口必须继承 Admin::AdminController，否则普通用户能读到配置
+    it "管理控制器继承 Admin::AdminController" do
+      source = File.read(File.expand_path("../plugin.rb", __dir__))
+      expect(source).to match(/class AdminController < ::Admin::AdminController/)
+    end
+
+    it "管理控制器声明 requires_plugin" do
+      source = File.read(File.expand_path("../plugin.rb", __dir__))
+      expect(source).to include("requires_plugin DiscourseCnkdLogin::PLUGIN_NAME")
+    end
+
+    it "设置白名单覆盖 settings.yml 里的全部 cnkd_login_* 设置" do
+      settings = YAML.load_file(File.expand_path("../config/settings.yml", __dir__))
+      declared = settings["cnkd_login"].keys
+      expect(declared.sort).to eq(DiscourseCnkdLogin.admin_setting_keys.sort)
+    end
+
+    it "页面资源已注册" do
+      source = File.read(File.expand_path("../plugin.rb", __dir__))
+      expect(source).to include("stylesheets/common/cnkd-login-admin.scss")
+      expect(source).to include("javascripts/discourse/admin/cnkd-login.js")
+    end
+
+    # 前端模板里用到的 i18n key 必须真实存在，否则页面会显示
+    # "translation missing" —— 这类问题在后台很难被注意到。
+    it "模板里的 i18n key 全部存在" do
+      template =
+        File.read(File.expand_path("../assets/javascripts/discourse/admin/templates/cnkd-login.hbs", __dir__))
+      keys = template.scan(/\{\{i18n\s+"([a-z0-9_.]+)"/).flatten
+      keys << template.scan(/@label="([a-z0-9_.]+)"/).flatten
+      keys.flatten!
+
+      expect(keys).not_to be_empty
+      keys.each do |key|
+        # 动态 label 在组件里由 JS 决定，这里跳过运行时常量
+        next if key.start_with?("cnkd_login.status.copy")
+        expect(I18n.t("js.#{key}")).not_to include("translation missing")
+      end
+    end
+  end
 end

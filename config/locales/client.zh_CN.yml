@@ -8,3 +8,90 @@ zh_CN:
       site_settings:
         categories:
           discourse_cnkd_login: "CNKD 一证通行登录"
+      # 后台设置页面文案。
+      #
+      # 命名空间说明：客户端 i18n 统一在 js.* 下，所以页面里
+      # i18n("cnkd_login.xxx") 实际取的是 js.cnkd_login.xxx。
+      # 这里刻意用 `cnkd_login` 而不是 `admin.cnkd_login` ——
+      # 后者会和路由标题 js.admin.plugins.cnkd_login 挤在同一层，
+      # 容易踩到 key 覆盖，排查起来很费劲。
+    cnkd_login:
+      page:
+        heading: "CNKD 一证通行登录"
+        subheading: "对接 CNKD 一证通行（OAuth 2.0 授权码 + S256 PKCE）。本页面用于核对配置与排查问题，设置项本身在「站点设置」中修改。"
+        open_settings: "前往站点设置"
+      status:
+        loading: "正在读取配置状态…"
+        refresh: "重新检查"
+        # 注意：不要把 key 命名为 yes / no / on / off / true / false ——
+        # YAML 1.1 会把它们解析成布尔值，i18n 查表就取不到了。
+        label_yes: "是"
+        label_no: "否"
+        ok: "配置完整，未发现问题。"
+        has_warnings: "配置可用，但有几处建议确认。"
+        has_errors: "存在必须修复的配置错误，登录将无法完成。"
+        not_configured: "登录尚未配置完成（缺少必填项）。"
+        summary: "登录可用：%{configured} · 错误 %{errors} 项 · 提醒 %{warnings} 项"
+      callback:
+        label: "回调地址（必须登记到 CNKD 平台）"
+        hint: "请把下面的地址逐字符提交给 CNKD 登记。协议、主机名、大小写、末尾斜杠任一不同都会被平台拒绝。"
+        copy: "复制"
+        copied: "已复制"
+        unavailable: "尚未生成（请先填写站点地址）"
+      settings:
+        heading: "当前配置"
+        intro: "本页面展示的均为当前生效值。修改请点击下方的「前往站点设置」。密钥类设置只显示占位符，不会回传原文。"
+        col:
+          setting: "设置项"
+          value: "当前值"
+          scope: "可见范围"
+        scope_client: "客户端可见"
+        scope_server: "仅服务端"
+        empty_value: "（未填写）"
+      checks:
+        heading: "配置自检"
+      preview:
+        heading: "握手预览"
+        intro: "下面是按当前配置生成的报文示例（不含真实密钥与令牌，不会发出任何网络请求）。遇到授权失败时，可对照这里的参数与 CNKD 后台登记值逐一核查。"
+        field:
+          url: "请求地址"
+          headers: "请求头"
+          body: "请求体 / 响应示例"
+      # ---- 自检项文案 ----
+      #
+      # 这些 key 由后端 lib/cnkd/health_check.rb 产出
+      # （形如 admin.cnkd_login.check.client_id_ok），
+      # 页面拿到后直接用 i18n() 翻译，所以必须与后端字符串严格一致。
+      check:
+        client_id_ok: "已配置 client_id。"
+        client_id_missing: "缺少 client_id。请向 CNKD 申请应用后填入，否则登录入口不会出现。"
+        public_app_secret_ok: "应用类型为 public，未配置密钥 —— 正确。"
+        public_app_has_secret: "应用类型为 public 却配置了密钥。平台会报「公开应用不需要密钥」，请清空该项。"
+        confidential_app_secret_ok: "应用类型为 confidential，已配置密钥。"
+        confidential_app_missing_secret: "应用类型为 confidential 但未配置密钥。平台会报「生态应用密钥无效」，请补填该项。"
+        pkce_ok: "PKCE（S256）已启用。"
+        pkce_forced: "应用类型为 public，平台强制启用 S256 PKCE，此处开关不生效。"
+        pkce_disabled: "PKCE 已关闭。confidential 应用建议开启，否则安全性下降。"
+        site_url_ok: "站点地址正确。"
+        site_url_blank: "站点地址为空，将回落到默认值 https://cloud.cnkd.fun。"
+        site_url_not_https: "站点地址必须是 https。CNKD 不接受明文 HTTP。"
+        site_url_has_api_prefix: "站点地址里包含了 /api-control 之类的接口路径。这里只需填站点根地址，接口路径由插件自行拼接。"
+        site_url_trailing_slash: "站点地址末尾有多余的斜杠，运行时已自动去除；建议直接改成不带斜杠的形式。"
+        scope_ok: "只申请了对外部合作方开放的 profile.basic 与 profile.status。"
+        sensitive_scopes_enabled: "已开启敏感授权范围。这些范围仅 CNKD 自有应用（ownerType=cnkd_internal 且 trustedLevel>=4）可用，外部合作方开启后会被平台拒绝。"
+        callback_not_https: "回调地址不是 https，CNKD 平台不会接受。"
+        callback_must_register: "回调地址的形态正确。请确认它已逐字符登记到 CNKD 后台 —— 这一步插件无法自动校验。"
+      # ---- 握手预览的每步标题 / 说明 ----
+      step:
+        authorize:
+          title: "① 跳转到 CNKD 授权页"
+          subtitle: "浏览器直接跳转，state 与 PKCE challenge 都在这里生成"
+          note: "scope 以空格分隔；redirect_uri 必须与下一步的换码请求逐字符一致，否则平台报「回调地址与授权请求不一致」。"
+        token:
+          title: "② 用授权码换取令牌"
+          subtitle: "本站与通用 OAuth 2.0 的最大差异：请求体必须是 JSON"
+          note: "此接口只接受 application/json。public 应用不要传 client_secret；confidential 应用必须传。这块逻辑在 lib/omniauth/strategies/cnkd.rb 里完全接管。"
+        userinfo:
+          title: "③ 读取用户资料"
+          subtitle: "唯一可信的校验入口，sub 即本地账号的唯一键"
+          note: "令牌是不透明字符串，无法本地解析，因此每次都通过本接口校验。平台限流 1200 次 / 10 分钟，插件对成功结果缓存 5 分钟。"
