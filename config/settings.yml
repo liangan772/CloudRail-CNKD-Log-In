@@ -47,6 +47,29 @@ cnkd_login:
   cnkd_login_request_email_verified:
     default: false
 
+  # 申请 email.address 范围：让 /userinfo 直接返回邮箱明文，
+  # 用户在本站注册时邮箱自动带入，不必手工填写。
+  #
+  # ⚠️ 与上面两项不同，这不属于「外部合作方一律不可申请」的范围：
+  # 只要 CNKD 已为你的应用开通该范围，开启后登录即可自动带回邮箱。
+  # 若应用未被授权，平台会在授权环节返回
+  # 「当前应用未开放这些授权范围」，此时请关闭本开关。
+  cnkd_login_scope_email:
+    default: false
+
+  # 把 CNKD 返回的已验证邮箱标记为「可信」，交给 Discourse 处理建号。
+  #
+  # 它落到 Auth::Result#email_valid 上，效果有三层：
+  #   1. 注册页的邮箱输入框会以已验证状态**预填并锁定**，
+  #      用户不必再手工输入（核心目标）；
+  #   2. 账号创建后直接激活，不再发验证邮件；
+  #   3. 提交的邮箱必须与 CNKD 返回的一致，否则建号被拒（防篡改）。
+  #
+  # 关闭后，即使拿到了邮箱也只会是普通文本，Discourse 仍要求用户
+  # 在注册页自己填写并验证 —— 排查「为什么还要填邮箱」时先看这里。
+  cnkd_login_auto_fill_email:
+    default: false
+
   cnkd_login_request_qq_summary:
     default: false
 

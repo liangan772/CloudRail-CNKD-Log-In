@@ -7,10 +7,12 @@ en:
     cnkd_login_enable_pkce: "Enable PKCE (S256). Mandatory and cannot be disabled for public apps."
     cnkd_login_site_url: "CNKD site root. Production is https://cloud.cnkd.fun; change it for private deployments or staging."
     cnkd_login_button_title: "Label shown on the login button."
+    cnkd_login_scope_email: "Request the email.address scope so CNKD returns the email address itself, sparing users from typing it at sign-up. CNKD must enable this scope for your application (once enabled it works for any owner type). Turning it on without the scope being granted makes authorisation fail, so leave it off until confirmed."
+    cnkd_login_auto_fill_email: "Mark the verified email returned by CNKD as trusted, so Discourse pre-fills and locks the email field on the sign-up form instead of asking the user to type it. It also activates the new account straight away and rejects any posted email that does not match CNKD's."
     cnkd_login_request_email_verified: "Request the email.verified scope (boolean only, never the address). CNKD-internal apps only; rejected for partner apps."
     cnkd_login_request_qq_summary: "Request the qq.summary scope (QQ binding status, nickname, avatar). CNKD-internal apps only; rejected for partner apps."
     cnkd_login_verbose_logging: "Log CNKD error details and requestId for support. Never logs token material."
-    cnkd_login_require_verified_email: "Require a verified email. CNKD enforces this upstream; this is a local second line of defence."
+    cnkd_login_require_verified_email: "Require a verified email. When enabled, the emailVerified field from CNKD is checked strictly and the email.address scope is requested automatically (otherwise the setting can never take effect)."
 
   login:
     cnkd:

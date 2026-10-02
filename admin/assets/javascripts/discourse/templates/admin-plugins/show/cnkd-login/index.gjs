@@ -144,6 +144,72 @@ export default class AdminPluginsShowCnkdLoginIndex extends Controller {
     );
   }
 
+  // ------------------------------------------------------------ 邮箱直通
+
+  // 后端返回的当前生效配置。
+  get settingsMap() {
+    return this.status?.settings ?? {};
+  }
+
+  // 当前值是否「打开」。
+  //
+  // 后端把设置值原样序列化过来：布尔设置就是 true / false。
+  // 这里统一成语义化的判断，模板里就不用关心类型了。
+  _enabled(key) {
+    return this.settingsMap[key]?.value === true;
+  }
+
+  // 本次授权是否申请了邮箱明文范围（决定 /userinfo 会不会带回邮箱）
+  //
+  // 优先用后端显式给出的 email_scope_enabled，避免前端去猜测
+  // scopes 数组的内容；旧版本接口没有该字段时回落到数组判断。
+  get emailScopeRequested() {
+    if (typeof this.status?.email_scope_enabled === "boolean") {
+      return this.status.email_scope_enabled;
+    }
+    return (this.status?.scopes ?? []).includes("email.address");
+  }
+
+  // 是否开启了「邮箱直通」（把返回的邮箱标记为已验证）
+  //
+  // 同样优先用后端字段，回落到设置表里的值。
+  get autoFillEmail() {
+    if (typeof this.status?.auto_fill_email === "boolean") {
+      return this.status.auto_fill_email;
+    }
+    return this._enabled("cnkd_login_auto_fill_email");
+  }
+
+  // 用户注册时还需不需要手工填邮箱 —— 一句话结论。
+  get emailFlowLevel() {
+    if (this.emailScopeRequested && this.autoFillEmail) {
+      return "ok";
+    }
+    if (this.emailScopeRequested || this.autoFillEmail) {
+      return "warning";
+    }
+    return "error";
+  }
+
+  get emailFlowIcon() {
+    return this.levelIcon(this.emailFlowLevel);
+  }
+
+  get emailFlowMessage() {
+    if (this.emailScopeRequested && this.autoFillEmail) {
+      return i18n("cnkd_login.email.state_auto");
+    }
+    // 只申请了范围、但没开「已验证标记」：邮箱带得回来，仍要用户手工填
+    if (this.emailScopeRequested) {
+      return i18n("cnkd_login.email.state_scope_only");
+    }
+    // 开了标记、却没申请范围：拿不到邮箱原文，开关无从生效
+    if (this.autoFillEmail) {
+      return i18n("cnkd_login.email.state_fill_only");
+    }
+    return i18n("cnkd_login.email.state_manual");
+  }
+
   // ------------------------------------------------------------ 当前配置表
 
   // 把后端返回的 settings map 摊平成表格行。
@@ -340,6 +406,31 @@ export default class AdminPluginsShowCnkdLoginIndex extends Controller {
             class="btn-default"
           />
         </div>
+      </div>
+
+      {{! ----------------------------------------------------- 邮箱直通状态 }}
+      {{!
+        这一块专门回答「用户注册时还要不要手工填邮箱」这一个问题。
+        它是本次需求的核心，所以单独成块而不是塞进设置表里。
+      }}
+      <div
+        class="cnkd-login-email cnkd-login-email--{{this.emailFlowLevel}}"
+      >
+        <div class="cnkd-login-email__head">
+          {{dIcon this.emailFlowIcon}}
+          <span class="cnkd-login-email__title">
+            {{i18n "cnkd_login.email.heading"}}
+          </span>
+        </div>
+        <p class="cnkd-login-email__body">
+          {{this.emailFlowMessage}}
+        </p>
+        {{#if this.emailScopeRequested}}
+          <div class="cnkd-login-email__kw">
+            <span>{{i18n "cnkd_login.email.scope_label"}}</span>
+            <code>email.address</code>
+          </div>
+        {{/if}}
       </div>
 
       {{! ----------------------------------------------------- 自检清单 }}

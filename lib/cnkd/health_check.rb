@@ -138,13 +138,20 @@ module ::DiscourseCnkdLogin
 
     # 文档 6.2：敏感 scope 仅 ownerType=cnkd_internal 且 trustedLevel>=4 可申请。
     # 外部合作方开启后，平台会在授权环节 400 拒绝。
+    #
+    # email.address 单独处理：它不在「外部合作方一律不可申请」的行列，
+    # 只要平台为应用开通即可使用 —— 所以开启后给的是 OK 而不是 WARNING。
     def self.scope_check(authenticator)
       sensitive = []
       sensitive << "email.verified" if SiteSetting.cnkd_login_request_email_verified
       sensitive << "qq.summary" if SiteSetting.cnkd_login_request_qq_summary
 
-      if sensitive.empty?
+      email_scope = email_scope_status
+
+      if sensitive.empty? && email_scope.nil?
         ok(:scope_ok, :"cnkd_login.check.scope_ok")
+      elsif sensitive.empty?
+        email_scope
       else
         warning(
           :sensitive_scopes_enabled,
@@ -152,6 +159,31 @@ module ::DiscourseCnkdLogin
           detail: sensitive.join(", "),
         )
       end
+    end
+
+    # 邮箱明文范围的配置体检。
+    #
+    # 这是「注册时不用手工填邮箱」所依赖的那一项，配错的表现是用户
+    # 被弹回补充邮箱的表单 —— 很容易被误判成插件 bug，所以单独报出来。
+    #
+    # 返回 nil 表示「没申请这个范围」，无需报告。
+    def self.email_scope_status
+      return nil unless DiscourseCnkdLogin.email_scope_enabled?
+
+      if !SiteSetting.cnkd_login_auto_fill_email
+        # 自相矛盾：把邮箱要回来了，却不标记为已验证，
+        # 用户照样得手填 —— 白白多申请了一个敏感范围。
+        return warning(
+          :email_scope_conflict,
+          :"cnkd_login.check.email_scope_conflict",
+        )
+      end
+
+      ok(
+        :email_scope_ok,
+        :"cnkd_login.check.email_scope_ok",
+        detail: DiscourseCnkdLogin::SCOPE_EMAIL_ADDRESS,
+      )
     end
 
     # 回调地址是本插件最容易配错、且报错信息最不直观的一项（文档 5.1）。

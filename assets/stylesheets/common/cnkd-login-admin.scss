@@ -77,6 +77,57 @@
     }
   }
 
+  // ------------------------------------------------------------ 邮箱直通
+  //
+  // 专门回答「用户注册时还要不要手工填邮箱」。与状态总览用同一套
+  // ok / warning / error 配色，便于管理员扫一眼就知道是不是配全了。
+
+  .cnkd-login-email {
+    margin-bottom: 1.5em;
+    padding: 0.85em 1em;
+    border-radius: var(--d-border-radius);
+    border: 1px solid var(--primary-low);
+    background: var(--primary-very-low);
+
+    &--ok {
+      border-color: var(--success-medium);
+      background: var(--success-low);
+    }
+
+    &--warning {
+      border-color: var(--tertiary-medium);
+      background: var(--tertiary-low);
+    }
+
+    &--error {
+      border-color: var(--danger-medium);
+      background: var(--danger-low);
+    }
+
+    .cnkd-login-email__head {
+      display: flex;
+      align-items: center;
+      gap: 0.5em;
+      font-weight: 600;
+      margin-bottom: 0.25em;
+    }
+
+    .cnkd-login-email__body {
+      margin: 0;
+      color: var(--primary-high);
+    }
+
+    .cnkd-login-email__kw {
+      margin-top: 0.5em;
+      font-size: var(--font-down-1);
+      color: var(--primary-medium);
+
+      code {
+        margin-left: 0.4em;
+      }
+    }
+  }
+
   // ------------------------------------------------------------ 回调地址
 
   .cnkd-login-callback {

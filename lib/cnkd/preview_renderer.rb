@@ -118,6 +118,7 @@ module ::DiscourseCnkdLogin
               "avatarUrl" => "https://oss.cnkd.xyz/avatar/example.png",
               "accountStatus" => "active",
               "riskLevel" => "normal",
+              "emailVerified" => true,
             },
           }
         else
@@ -134,6 +135,13 @@ module ::DiscourseCnkdLogin
             },
           }
         end
+
+      # 选了邮箱相关范围时，把 email 字段放进样例响应 ——
+      # 管理员一眼就能看出「这次握手会不会带回邮箱」，从而判断
+      # 用户注册时还需不需要手工填写。
+      if DiscourseCnkdLogin.email_scope_enabled?
+        sample["data"]["email"] = "user@example.com"
+      end
 
       {
         step: :userinfo,

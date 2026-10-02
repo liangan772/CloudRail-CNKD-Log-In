@@ -82,7 +82,11 @@ module ::DiscourseCnkdLogin
   # 合作方（ownerType=partner）实际可申请的 scope 上限，见文档 6.2
   SCOPE_PROFILE_BASIC = "profile.basic"
   SCOPE_PROFILE_STATUS = "profile.status"
-  # 敏感 scope：仅 ownerType=cnkd_internal 且 trustedLevel>=4 的自有应用可申请
+  # 邮箱明文。CNKD 的 email 范围字段名就是 email.address（见
+  # 《新增授权范围 email.address 补充说明 v1.0》），拿到后可直接用于建号，
+  # 用户不必在注册页手工填写。需平台为应用开通后方可使用。
+  SCOPE_EMAIL_ADDRESS = "email.address"
+  # 仅返回布尔值、不含邮箱原文（敏感范围）
   SCOPE_EMAIL_VERIFIED = "email.verified"
   SCOPE_QQ_SUMMARY = "qq.summary"
 
@@ -119,13 +123,35 @@ module ::DiscourseCnkdLogin
   # 组装最终请求的 scope 列表。
   #
   # profile.basic / profile.status 对所有合作方开放（文档 6.2），始终申请。
-  # 其余两项属敏感范围，仅 CNKD 自有应用（ownerType=cnkd_internal 且
-  # trustedLevel>=4）可申请，外部合作方开启会被平台 400 拒绝。
+  #
+  # email.address 需要 CNKD 为应用开通：开通后 /userinfo 会直接返回邮箱明文，
+  # 用户在 Discourse 注册时邮箱即自动带入，不必手工填写 —— 这正是
+  # cnkd_login_scope_email 这个开关的作用。
+  #
+  # 另外两项（email.verified / qq.summary）属敏感范围，仅 CNKD 自有应用
+  # （ownerType=cnkd_internal 且 trustedLevel>=4）可申请，外部合作方开启
+  # 会被平台 400 拒绝。
   def self.requested_scopes
     scopes = [SCOPE_PROFILE_BASIC, SCOPE_PROFILE_STATUS]
+    scopes << SCOPE_EMAIL_ADDRESS if email_scope_enabled?
     scopes << SCOPE_EMAIL_VERIFIED if SiteSetting.cnkd_login_request_email_verified
     scopes << SCOPE_QQ_SUMMARY if SiteSetting.cnkd_login_request_qq_summary
     scopes
+  end
+
+  # 是否申请邮箱明文范围。
+  #
+  # 三种情况都视为「要邮箱」：
+  #   1. 管理员显式打开 cnkd_login_scope_email；
+  #   2. 打开了 cnkd_login_auto_fill_email（邮箱直通）—— 没有原文就无从预填；
+  #   3. 打开了 cnkd_login_require_verified_email —— 该开关要校验邮箱已验证，
+  #      没有原文就永远无法生效，是个死开关。
+  #
+  # 合并成一个入口，避免「两个开关各要一次邮箱」这种自相矛盾的配置。
+  def self.email_scope_enabled?
+    SiteSetting.cnkd_login_scope_email ||
+      SiteSetting.cnkd_login_auto_fill_email ||
+      SiteSetting.cnkd_login_require_verified_email
   end
 
   # 后台设置页面用到的全部设置名。
@@ -141,6 +167,8 @@ module ::DiscourseCnkdLogin
     cnkd_login_enable_pkce
     cnkd_login_site_url
     cnkd_login_button_title
+    cnkd_login_scope_email
+    cnkd_login_auto_fill_email
     cnkd_login_request_email_verified
     cnkd_login_request_qq_summary
     cnkd_login_verbose_logging
@@ -189,6 +217,68 @@ require_relative "lib/cnkd/authenticator"
 #   - 按钮会跳到 /auth/cnkd/callback 而不是 /auth/cnkd，直接认证失败
 # 标准 OmniAuth provider 应交给默认流程走 POST /auth/cnkd。
 auth_provider authenticator: DiscourseCnkdLogin::Authenticator.new
+
+# 邮箱直通：让「服务商已返回的邮箱」真正顶用，用户不必再手工填写。
+#
+# ── 为什么这里必须有一步额外处理 ──
+#
+# 核心的 UserAuthenticator 是这样收集字段的：
+#     def email_valid?
+#       @auth_result&.email_valid
+#     end
+# 它读的是 **Auth::Result#email_valid**，而不是 auth hash 里的
+# info[:email_verified]。而 Auth::Result#email_valid 只有一个赋值点
+# （lib/auth/managed_authenticator.rb）：
+#     result.email_valid = primary_email_verified?(auth_token) if result.email.present?
+#
+# 也就是说：Authenticator#primary_email_verified? 为 true 时，
+# 注册页的邮箱框会以「已验证」状态预填并锁定，用户直接点创建即可；
+# 为 false 时，邮箱就算带回来了也只是一个普通字符串，用户仍要手填。
+#
+# 这个钩子做两件事：
+#   1. 把 CNKD 的邮箱写进 result（核心已写，这里兜底，保证
+#      "邮箱非空" 与 "email_valid" 两个条件同时成立）；
+#   2. 在管理员关闭 cnkd_login_auto_fill_email 时把 email_valid
+#      压回 false —— 给管理员一个可以退回旧行为的开关。
+#
+# 触发时机由核心保证：OmniauthCallbacksController#complete 里
+#     @auth_result = authenticator.after_authenticate(auth)
+#     DiscourseEvent.trigger(:after_auth, authenticator, @auth_result, session, cookies, request)
+# 即 after_authenticate 之后、读取 email_valid 之前。
+on(:after_auth) do |authenticator, result|
+  # 只管自己，别影响其他登录方式
+  next unless authenticator.name == "cnkd"
+
+  email = result.email.presence || result.extra_data&.dig(:cnkd_email)
+
+  if email.blank?
+    # 没申请邮箱范围（或平台没返回）：保持原样，用户继续手工填写。
+    Rails.logger.info(
+      "[#{DiscourseCnkdLogin::PLUGIN_NAME}] 本次登录未带回邮箱，" \
+        "注册页将要求用户手工填写。如需自动带入，请开启 " \
+        "cnkd_login_scope_email（并确认平台已为该应用开通 email.address）。",
+    )
+    next
+  end
+
+  # 归一化，避免大小写差异导致后续与 UserEmail 比对失败
+  result.email = email.to_s.strip.downcase
+
+  unless SiteSetting.cnkd_login_auto_fill_email
+    result.email_valid = false
+    Rails.logger.info(
+      "[#{DiscourseCnkdLogin::PLUGIN_NAME}] 已带回邮箱 #{result.email}，" \
+        "但 cnkd_login_auto_fill_email 为关闭状态，注册页仍会要求用户确认。",
+    )
+    next
+  end
+
+  result.email_valid = true
+  Rails.logger.info(
+    "[#{DiscourseCnkdLogin::PLUGIN_NAME}] 邮箱直通生效：#{result.email} " \
+      "将作为已验证邮箱预填到注册页。",
+  )
+end
 
 # 后台设置界面入口。
 #

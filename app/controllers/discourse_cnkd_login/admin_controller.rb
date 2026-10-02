@@ -23,6 +23,10 @@ module ::DiscourseCnkdLogin
         client_type: SiteSetting.cnkd_login_client_type,
         pkce: DiscourseCnkdLogin::Authenticator.new.pkce_enabled?,
         scopes: DiscourseCnkdLogin.requested_scopes,
+        # 邮箱直通状态：页面据此判断「注册时还要不要手工填邮箱」。
+        # 两项都要传到，缺一项页面的四态判断就会失真。
+        email_scope_enabled: DiscourseCnkdLogin.email_scope_enabled?,
+        auto_fill_email: SiteSetting.cnkd_login_auto_fill_email,
         configured: DiscourseCnkdLogin::HealthCheck.configured?,
         healthy: !DiscourseCnkdLogin::HealthCheck.error?(checks),
         checks: checks.map { |check| serialize_check(check) },

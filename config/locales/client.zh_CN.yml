@@ -42,6 +42,17 @@ zh_CN:
         copy: "复制"
         copied: "已复制"
         unavailable: "尚未生成（请先填写站点地址）"
+      # ---- 邮箱直通（注册时是否还要手工填邮箱）----
+      #
+      # state_* 四态由页面根据「是否申请 email.address」×「是否开启自动带入」
+      # 组合得出，刻意把结论写清楚，避免管理员靠猜。
+      email:
+        heading: "邮箱直通"
+        scope_label: "当前申请的邮箱范围"
+        state_auto: "已就绪：CNKD 返回的邮箱会被标记为已验证，注册页的邮箱输入框将自动预填并锁定，用户不必手工输入 —— 直接点「创建账号」即可完成注册。"
+        state_scope_only: "已申请邮箱范围，但未开启「邮箱直通」。邮箱会被带回来，却没有被标记为已验证，Discourse 仍会要求用户手工填写。请打开 cnkd_login_auto_fill_email。"
+        state_fill_only: "「邮箱直通」已开启，但没有申请 email.address 范围，拿不到邮箱原文，开关不会生效。请打开 cnkd_login_scope_email。"
+        state_manual: "未申请邮箱范围，用户需要在注册页手工填写邮箱。若 CNKD 已为你的应用开通 email.address，请打开 cnkd_login_scope_email 与 cnkd_login_auto_fill_email。"
       settings:
         heading: "当前配置"
         intro: "本页面展示的均为当前生效值。修改请点击下方的「前往站点设置」。密钥类设置只显示占位符，不会回传原文。"
@@ -82,6 +93,8 @@ zh_CN:
         site_url_has_api_prefix: "站点地址里包含了 /api-control 之类的接口路径。这里只需填站点根地址，接口路径由插件自行拼接。"
         site_url_trailing_slash: "站点地址末尾有多余的斜杠，运行时已自动去除；建议直接改成不带斜杠的形式。"
         scope_ok: "只申请了对外部合作方开放的 profile.basic 与 profile.status。"
+        email_scope_ok: "已申请 email.address 范围，CNKD 会把邮箱原文带回来 —— 配合「邮箱直通」可让注册页预填并锁定邮箱。"
+        email_scope_conflict: "同时打开了「要求邮箱已验证」与「邮箱直通」的关闭状态，两者互相矛盾：没有邮箱原文就永远无法通过验证。建议开启「邮箱直通」，或者一并关掉「要求邮箱已验证」。"
         sensitive_scopes_enabled: "已开启敏感授权范围。这些范围仅 CNKD 自有应用（ownerType=cnkd_internal 且 trustedLevel>=4）可用，外部合作方开启后会被平台拒绝。"
         callback_not_https: "回调地址不是 https，CNKD 平台不会接受。"
         callback_must_register: "回调地址的形态正确。请确认它已逐字符登记到 CNKD 后台 —— 这一步插件无法自动校验。"

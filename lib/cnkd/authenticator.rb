@@ -34,10 +34,35 @@ class DiscourseCnkdLogin::Authenticator < Auth::ManagedAuthenticator
   end
 
   # CNKD 的门禁已强制要求邮箱验证，返回的邮箱必然可信。
-  # 但对外部合作方（partner）默认拿不到邮箱原文，因此这个判断只在
-  # 应用被授予 email.address 时才可能为真。
+  #
+  # ⚠️ 这个方法决定了注册页会不会要求用户手工填邮箱。
+  #    核心里的唯一使用点（lib/auth/managed_authenticator.rb）：
+  #
+  #      result.email_valid = primary_email_verified?(auth_token) if result.email.present?
+  #
+  #    而 OmniauthCallbacksController#handle_account_activation 里：
+  #      if @auth_result.email_valid && @auth_result.email == user.email
+  #        user.activate      # 直接激活，不再发验证邮件
+  #
+  #    原本这里只认 auth_token[:info][:email_verified]，而那个字段需要
+  #    email.verified 这个敏感 scope —— 普通应用申请不到，于是永远为
+  #    false，用户就被弹回手工填邮箱。这正是本次要修的问题。
+  #
+  # 现在的判断：
+  #   · 邮箱为空         -> false（没东西可用）
+  #   · 平台给了显式布尔 -> 以平台为准（保留更严格语义的可能）
+  #   · 只有邮箱明文     -> true（能拿到明文说明范围已开通，
+  #                        且 CNKD 门禁要求邮箱已验证）
+  #
+  # 另有一个总开关 cnkd_login_auto_fill_email，在 plugin.rb 的
+  # :after_auth 钩子里把它压回 false —— 给管理员保留退回旧行为的能力。
   def primary_email_verified?(auth_token)
-    auth_token.dig(:info, :email_verified) == true
+    info = auth_token&.dig(:info) || {}
+    return false if info[:email].blank?
+
+    return info[:email_verified] if [true, false].include?(info[:email_verified])
+
+    true
   end
 
   def can_revoke?
@@ -48,11 +73,23 @@ class DiscourseCnkdLogin::Authenticator < Auth::ManagedAuthenticator
     true
   end
 
-  # Discourse 不使用长期第三方令牌，access_token 60 分钟后就失效，
-  # 因此不需要 refresh_token（CNKD 默认 allowRefreshToken=true，
-  # 但我们主动不申请，见文档 6.4 / 9.4）。
+  # ------------------------------------------------------------- 邮箱同步
+
+  # 每次登录都把 CNKD 的最新邮箱同步到本地账号。
+  #
+  # 核心里的用法（Auth::Result#apply_user_attributes!）：
+  #     if (SiteSetting.auth_overrides_email || overrides_email || ...) &&
+  #          email_valid && email.present? && user.email != Email.downcase(email)
+  #       user.email = email
+  #
+  # 也就是说，只有它或全局 auth_overrides_email 为真时，本地邮箱才会
+  # 跟随上游变化。默认的 false 会导致：用户在 CNKD 换了邮箱，本站
+  # 永远停在旧地址。CNKD 是权威身份源，所以这里返回 true。
+  #
+  # ⚠️ 生效前提是 email_valid 必须为真（见 primary_email_verified?），
+  #    否则这段同步根本不会被触发 —— 两个条件是一套的。
   def always_update_user_email?
-    false
+    true
   end
 
   # ---------------------------------------------------------------- 中间件注册
@@ -164,7 +201,16 @@ class DiscourseCnkdLogin::Authenticator < Auth::ManagedAuthenticator
       ::DiscourseCnkdLogin::AccountMatcher.build_extra(profile),
     )
 
-    # 5) 交给 ManagedAuthenticator 完成本地账号的查找 / 创建 / 资料同步
+    # 5) 交给 ManagedAuthenticator 完成本地账号的查找 / 创建 / 资料同步。
+    #
+    #    里面按顺序做三件事（核心源码 lib/auth/managed_authenticator.rb）：
+    #      a. 按 (provider_name, provider_uid) 找已有绑定 —— 老用户走这条；
+    #      b. existing_account（「已登录时关联新账号」场景）；
+    #      c. match_by_email? 为真时按邮件找本地账号。
+    #
+    #    注意 c 依赖 primary_email_verified?，所以本类必须让它对
+    #    「带回了邮箱」的情况返回 true，否则邮箱匹配与后续的
+    #    email_valid 都会失效。
     super(auth_token, existing_account: existing_account)
   end
 

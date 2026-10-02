@@ -100,7 +100,9 @@ module ::DiscourseCnkdLogin
         "bio" => data["bio"],
         "accountStatus" => data["accountStatus"],
         "riskLevel" => data["riskLevel"],
-        # 以下两项仅当应用被授予对应敏感 scope 时才存在（文档 7.6 / 补充说明 4.3）
+        # 以下两项仅当应用被授予对应邮箱范围时才存在。
+        # 申请 email.address 后 data["email"] 会带上邮箱明文，
+        # 用于让用户注册时免于手工填写（见 README 7.4）。
         "emailVerified" => data["emailVerified"],
         "email" => data["email"],
       }

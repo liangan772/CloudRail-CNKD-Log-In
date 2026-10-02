@@ -73,6 +73,33 @@ RSpec.describe DiscourseCnkdLogin do
     it "不申请 email.address —— 该 scope 外部合作方无法通过平台门禁" do
       expect(DiscourseCnkdLogin.requested_scopes).not_to include("email.address")
     end
+
+    # 「注册时不用手工填邮箱」的前提：必须把邮箱范围要回来。
+    # 这一步是整条链路的起点，漏了后面全部失效。
+    it "开启邮箱直通后申请 email.address 范围" do
+      SiteSetting.cnkd_login_auto_fill_email = true
+      expect(DiscourseCnkdLogin.requested_scopes).to include("email.address")
+    end
+
+    it "显式打开 cnkd_login_scope_email 也会申请 email.address" do
+      SiteSetting.cnkd_login_scope_email = true
+      expect(DiscourseCnkdLogin.requested_scopes).to include("email.address")
+    end
+
+    # 该开关要校验邮箱已验证，没有原文就永远无法生效 —— 属于死开关，
+    # 所以打开它时自动带上邮箱范围。
+    it "要求邮箱已验证时自动带上 email.address，避免开关空转" do
+      SiteSetting.cnkd_login_require_verified_email = true
+      expect(DiscourseCnkdLogin.requested_scopes).to include("email.address")
+    end
+
+    it "全部关闭时不申请 email.address" do
+      SiteSetting.cnkd_login_scope_email = false
+      SiteSetting.cnkd_login_auto_fill_email = false
+      SiteSetting.cnkd_login_require_verified_email = false
+      expect(DiscourseCnkdLogin.email_scope_enabled?).to eq(false)
+      expect(DiscourseCnkdLogin.requested_scopes).not_to include("email.address")
+    end
   end
 
   # ------------------------------------------------------------ 应用类型
@@ -167,17 +194,41 @@ RSpec.describe DiscourseCnkdLogin do
       expect(info[:image]).to eq("https://a/b.png")
     end
 
-    it "外部合作方场景下不返回 email，用户需自行填写" do
+    it "未拿到邮箱时不产出 email，用户需自行填写" do
       info = DiscourseCnkdLogin::AccountMatcher.build_info({ "sub" => sub })
       expect(info).not_to have_key(:email)
       expect(info).not_to have_key(:email_verified)
     end
 
-    it "授予 email.address 时带出邮箱并标记为已验证" do
+    it "拿到邮箱明文时带出邮箱并标记为已验证" do
       info = DiscourseCnkdLogin::AccountMatcher.build_info(
         { "email" => "person@example.com", "emailVerified" => true },
       )
       expect(info[:email]).to eq("person@example.com")
+      expect(info[:email_verified]).to eq(true)
+    end
+
+    # 只申请 email.address、没申请 email.verified 时，平台不返回
+    # emailVerified 字段。这种情况下邮箱仍然是可信的（能返回明文
+    # 说明范围已开通，且平台门禁要求邮箱已验证），必须照样标记。
+    it "拿到明文但平台未返回 emailVerified 时仍标记为已验证" do
+      info = DiscourseCnkdLogin::AccountMatcher.build_info(
+        { "email" => "person@example.com" },
+      )
+      expect(info[:email]).to eq("person@example.com")
+      expect(info[:email_verified]).to eq(true)
+    end
+
+    it "邮箱统一小写并去掉空白，避免与本地账号比对失败" do
+      info = DiscourseCnkdLogin::AccountMatcher.build_info(
+        { "email" => "  Person@Example.COM  " },
+      )
+      expect(info[:email]).to eq("person@example.com")
+    end
+
+    it "只有布尔值、没有邮箱原文时不产出 email，只记录验证状态" do
+      info = DiscourseCnkdLogin::AccountMatcher.build_info({ "emailVerified" => true })
+      expect(info).not_to have_key(:email)
       expect(info[:email_verified]).to eq(true)
     end
   end
@@ -304,9 +355,98 @@ RSpec.describe DiscourseCnkdLogin do
       expect(authenticator.enable_setting).to eq(:cnkd_login_enabled)
     end
 
-    it "primary_email_verified? 只认显式 true" do
-      expect(authenticator.primary_email_verified?({ info: { email_verified: true } })).to eq(true)
-      expect(authenticator.primary_email_verified?({ info: {} })).to eq(false)
+    # primary_email_verified? 是 Auth::Result#email_valid 的唯一来源，
+    # 而 email_valid 决定注册页是否要求用户手工填邮箱。
+    # 修复前它只认 info[:email_verified]，而该字段需要 email.verified
+    # 敏感 scope（普通应用申请不到），于是永远 false —— 用户被弹回手填。
+    describe "primary_email_verified?（决定注册页是否要求手填邮箱）" do
+      it "带回了邮箱明文即视为已验证" do
+        expect(
+          authenticator.primary_email_verified?({ info: { email: "a@b.com" } }),
+        ).to eq(true)
+      end
+
+      it "平台显式给出 true 时通过" do
+        expect(
+          authenticator.primary_email_verified?(
+            { info: { email: "a@b.com", email_verified: true } },
+          ),
+        ).to eq(true)
+      end
+
+      it "平台显式给出 false 时以平台为准" do
+        expect(
+          authenticator.primary_email_verified?(
+            { info: { email: "a@b.com", email_verified: false } },
+          ),
+        ).to eq(false)
+      end
+
+      it "没有邮箱原文时不通过（无论有没有布尔值）" do
+        expect(authenticator.primary_email_verified?({ info: {} })).to eq(false)
+        expect(
+          authenticator.primary_email_verified?({ info: { email_verified: true } }),
+        ).to eq(false)
+      end
+
+      it "只有布尔值、没有明文时不通过 —— 没有原文无法建号" do
+        expect(
+          authenticator.primary_email_verified?(
+            { info: { email: nil, email_verified: true } },
+          ),
+        ).to eq(false)
+      end
+    end
+
+    it "always_update_user_email? 为 true，让本地邮箱跟随 CNKD" do
+      expect(authenticator.always_update_user_email?).to eq(true)
+    end
+  end
+
+  # ------------------------------------------------------ 邮箱直通（注册免手填）
+
+  # 这条链路跨 plugin.rb / account_matcher / authenticator 四个环节，
+  # 而且任何一环断了都不会报错 —— 只是静默退化成「用户又得手工填邮箱」。
+  # 所以这里既做静态装配断言，也做语义断言。
+  describe "邮箱直通" do
+    let(:plugin_source) { File.read(File.expand_path("../plugin.rb", __dir__)) }
+
+    it "注册了 :after_auth 钩子" do
+      expect(plugin_source).to include("on(:after_auth)")
+    end
+
+    it "钩子把 email_valid 置为 true" do
+      hook = plugin_source.split("on(:after_auth)", 1)[1]
+      expect(hook).to include("result.email_valid = true")
+    end
+
+    # 钩子必须只处理本插件，否则会改写其他登录方式的 email_valid
+    it "钩子限定了只能作用于 cnkd" do
+      hook = plugin_source.split("on(:after_auth)", 1)[1]
+      expect(hook).to include('authenticator.name == "cnkd"')
+    end
+
+    it "钩子受 cnkd_login_auto_fill_email 开关控制" do
+      hook = plugin_source.split("on(:after_auth)", 1)[1]
+      expect(hook).to include("SiteSetting.cnkd_login_auto_fill_email")
+    end
+
+    # 钩子里触发时 core 已经把 email 放进 result 了，这里再兜一层
+    it "钩子会把 result.email 归一化为小写" do
+      hook = plugin_source.split("on(:after_auth)", 1)[1]
+      expect(hook).to include("result.email = ")
+      expect(hook).to include("downcase")
+    end
+
+    it "定义了 email.address 范围常量" do
+      expect(plugin_source).to include('SCOPE_EMAIL_ADDRESS = "email.address"')
+    end
+
+    # 邮件匹配（match_by_email）依赖 primary_email_verified?，
+    # 所以「有邮箱 -> 视为已验证」是邮箱匹配能工作的前提。
+    it "邮箱可匹配既有账号：primary_email_verified? 对明文返回 true" do
+      a = DiscourseCnkdLogin::Authenticator.new
+      expect(a.primary_email_verified?({ info: { email: "a@b.com" } })).to eq(true)
     end
   end
 
@@ -388,6 +528,37 @@ RSpec.describe DiscourseCnkdLogin do
       checks = DiscourseCnkdLogin::HealthCheck.run
       check = checks.find { |c| c[:id] == :sensitive_scopes_enabled }
       expect(check[:level]).to eq(DiscourseCnkdLogin::HealthCheck::WARNING)
+    end
+
+    # 邮箱直通是「注册免手填」所依赖的配置，配全了要给 OK
+    it "邮箱直通配全时报告邮箱范围已申请" do
+      SiteSetting.cnkd_login_auto_fill_email = true
+      checks = DiscourseCnkdLogin::HealthCheck.run
+      check = checks.find { |c| c[:id] == :email_scope_ok }
+      expect(check).to be_present
+      expect(check[:level]).to eq(DiscourseCnkdLogin::HealthCheck::OK)
+      expect(check[:detail]).to eq("email.address")
+    end
+
+    # 把邮箱要回来了却不标记为已验证 —— 白申请一个范围，用户照样手填
+    it "申请了邮箱范围但未开启邮箱直通时给出提醒" do
+      SiteSetting.cnkd_login_scope_email = true
+      SiteSetting.cnkd_login_auto_fill_email = false
+      SiteSetting.cnkd_login_require_verified_email = false
+      checks = DiscourseCnkdLogin::HealthCheck.run
+      check = checks.find { |c| c[:id] == :email_scope_conflict }
+      expect(check).to be_present
+      expect(check[:level]).to eq(DiscourseCnkdLogin::HealthCheck::WARNING)
+    end
+
+    it "未申请邮箱范围时不产出邮箱相关检查项" do
+      SiteSetting.cnkd_login_scope_email = false
+      SiteSetting.cnkd_login_auto_fill_email = false
+      SiteSetting.cnkd_login_require_verified_email = false
+      ids = DiscourseCnkdLogin::HealthCheck.run.map { |c| c[:id] }
+      expect(ids).to include(:scope_ok)
+      expect(ids).not_to include(:email_scope_ok)
+      expect(ids).not_to include(:email_scope_conflict)
     end
 
     # 回调地址始终带一条「需人工登记」的提醒，并附上完整地址

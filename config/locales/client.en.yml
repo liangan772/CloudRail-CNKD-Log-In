@@ -42,6 +42,18 @@ en:
         copy: "Copy"
         copied: "Copied"
         unavailable: "Not available yet (set the site URL first)"
+      # ---- Email pass-through (does sign-up still need a typed address?) ----
+      #
+      # The four state_* strings come from combining "is email.address
+      # requested?" with "is auto-fill on?", so the conclusion is spelled
+      # out instead of leaving the admin to guess.
+      email:
+        heading: "Email pass-through"
+        scope_label: "Email scope currently requested"
+        state_auto: "Ready: the email returned by CNKD is marked as verified, so the sign-up form pre-fills and locks the email field. Users just click “Create your account” — no typing required."
+        state_scope_only: "The email scope is requested, but email pass-through is off, so the address arrives without being marked verified and Discourse still asks the user to type it. Turn on cnkd_login_auto_fill_email."
+        state_fill_only: "Email pass-through is on, but the email.address scope is not requested, so no address is returned and the setting has no effect. Turn on cnkd_login_scope_email."
+        state_manual: "No email scope is requested, so users must type an email address at sign-up. If CNKD has granted your application email.address, turn on cnkd_login_scope_email and cnkd_login_auto_fill_email."
       settings:
         heading: "Current configuration"
         intro: "The values below are the ones currently in effect. Use the button at the bottom to change them. Secret settings only show a placeholder and never return their value."
@@ -82,6 +94,8 @@ en:
         site_url_has_api_prefix: "The site URL contains an API path such as /api-control. Enter the site root only — the plugin appends the API paths itself."
         site_url_trailing_slash: "The site URL has a redundant trailing slash. It is stripped at runtime, but it is cleaner to remove it."
         scope_ok: "Only profile.basic and profile.status, which are open to partner apps, are requested."
+        email_scope_ok: "The email.address scope is requested, so CNKD returns the address itself — together with email pass-through this pre-fills and locks the field on the sign-up form."
+        email_scope_conflict: "“Require a verified email” is on while email pass-through is off, which contradicts itself: without the address itself the check can never pass. Turn on email pass-through, or turn off the verified-email requirement."
         sensitive_scopes_enabled: "Sensitive scopes are enabled. These are limited to CNKD-internal apps (ownerType=cnkd_internal with trustedLevel>=4); partner apps will be rejected."
         callback_not_https: "The callback URL is not https; CNKD will not accept it."
         callback_must_register: "The callback URL is well formed. Confirm that it has been registered with CNKD character for character — the plugin cannot verify this for you."

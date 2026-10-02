@@ -715,6 +715,110 @@ def check_route_map_consistency():
         notes.append("route map 与 add_admin_route 的路由名一致，且挂在共享 show 路由下")
 
 
+# ---------------------------------------------------------------- 邮箱直通
+
+def check_email_passthrough():
+    """守住「注册时不再手工填邮箱」这条链路的四个环节。
+
+    背景（回看 Discourse 核心源码得到的结论）：
+
+      · app/controllers/users_controller.rb 的 create 里
+          params.require(:email)
+        是**无条件**的 —— 服务端建号永远要收到 email 参数，
+        注册页表单是唯一取值来源。所以目标不是「不显示该字段」，
+        而是让它以**已验证状态预填并锁定**。
+
+      · 该表单读的是 Auth::Result#email_valid（经 UserAuthenticator#email_valid?），
+        而它的唯一赋值点是 lib/auth/managed_authenticator.rb：
+          result.email_valid = primary_email_verified?(auth_token) if result.email.present?
+
+    因此四件事缺一不可，否则用户就会被弹回手工填写：
+      1. plugin.rb 申请 email.address 范围（否则拿不到邮箱原文）
+      2. AccountMatcher.build_info 把邮箱写进 info[:email]
+      3. Authenticator#primary_email_verified? 对「有邮箱明文」返回 true
+      4. plugin.rb 的 :after_auth 钩子把它落到 result.email_valid
+
+    这条链路跨 4 个文件、且错了不报错（只是静默退化成手填），
+    所以必须用静态检查钉住。
+    """
+    plugin = (ROOT / "plugin.rb").read_text(encoding="utf-8")
+    matcher = (ROOT / "lib/cnkd/account_matcher.rb").read_text(encoding="utf-8")
+    auth = (ROOT / "lib/cnkd/authenticator.rb").read_text(encoding="utf-8")
+
+    # 1) 必须定义并申请 email.address 范围
+    if 'SCOPE_EMAIL_ADDRESS = "email.address"' not in plugin:
+        fail("plugin.rb 缺少 SCOPE_EMAIL_ADDRESS 常量（邮箱直通的前提）")
+    if not re.search(r"scopes << SCOPE_EMAIL_ADDRESS", plugin):
+        fail("plugin.rb 的 requested_scopes 没有申请 SCOPE_EMAIL_ADDRESS")
+
+    # 2) info[:email] 必须由 AccountMatcher 写入
+    if "info[:email] = email" not in matcher:
+        fail("account_matcher.rb 没有把邮箱写进 info[:email]，注册页拿不到预填值")
+
+    # 3) 邮箱明文必须被判定为「已验证」
+    #
+    # 这是整个链路最容易退化的地方：只要这里变成「必须 email_verified == true」，
+    # 普通应用（拿不到 email.verified 敏感 scope）就会静默退化成手工填邮箱，
+    # 而且不报任何错 —— 必须从**语义**上钉死，而不是匹配某个具体写法。
+    #
+    # 做法：剥掉注释与空行，对剩下的有效语句逐条判定。
+    if "def primary_email_verified?" not in auth:
+        fail("authenticator.rb 缺少 primary_email_verified?（email_valid 的唯一来源）")
+    else:
+        raw = auth.split("def primary_email_verified?", 1)[1].split("\n  end", 1)[0]
+        stmts = []
+        for ln in raw.replace("\r\n", "\n").split("\n"):
+            ln = ln.split("#", 1)[0].strip()
+            if ln:
+                stmts.append(ln)
+
+        # a) 必须存在「邮箱为空 -> 返回 false」的前提
+        if not any("blank?" in x and "false" in x for x in stmts):
+            fail(
+                "primary_email_verified? 没有以「邮箱非空」为前提 —— "
+                "会在没有邮箱时误判为已验证"
+            )
+
+        # b) 最后一条语句必须是裸 `true`：有明文、平台又没给布尔值时
+        #    必须放行，这是普通应用唯一的出路。
+        if not stmts or stmts[-1] != "true":
+            fail(
+                "primary_email_verified? 的最后一条语句必须是 `true`（兜底）—— "
+                "否则普通应用拿不到 email.verified 敏感 scope，"
+                "会永远退化回手工填邮箱"
+            )
+
+        # c) 必须显式判断 email_verified 是否为布尔值，而不是直接 `== true`
+        if not any("include?" in x and "email_verified" in x for x in stmts):
+            fail(
+                "primary_email_verified? 必须显式判断 info[:email_verified] 是否为布尔值"
+                "（形如 [true, false].include?(...)）—— 直接 `== true` "
+                "就是修复前的 bug，会让注册页始终要求手工填邮箱"
+            )
+
+    # 4) :after_auth 钩子必须存在且落到 result.email_valid
+    if "on(:after_auth)" not in plugin:
+        fail(
+            "plugin.rb 缺少 on(:after_auth) 钩子 —— core 只在 "
+            "ManagedAuthenticator 里按 primary_email_verified? 赋值 "
+            "email_valid，插件侧无法覆盖『邮箱直通』开关"
+        )
+    else:
+        hook = plugin.split("on(:after_auth)", 1)[1]
+        if "result.email_valid = true" not in hook:
+            fail(":after_auth 钩子没有把 result.email_valid 置为 true")
+        if 'authenticator.name == "cnkd"' not in hook:
+            fail(":after_auth 钩子没有限定 authenticator.name，会影响其他登录方式")
+
+    # 5) 开关必须真实存在
+    settings = (ROOT / "config/settings.yml").read_text(encoding="utf-8")
+    for key in ("cnkd_login_scope_email", "cnkd_login_auto_fill_email"):
+        if key not in settings:
+            fail(f"settings.yml 缺少 {key}（邮箱直通无法配置）")
+
+    notes.append("邮箱直通链路完整（scope -> info -> email_valid -> after_auth 钩子）")
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -724,6 +828,7 @@ def main():
     check_admin_page_layout()
     check_route_map_consistency()
     check_health_check_ids()
+    check_email_passthrough()
     client_keys, server_keys = check_locale_symmetry()
     check_referenced_keys(client_keys, server_keys)
     check_template_keys(client_keys)

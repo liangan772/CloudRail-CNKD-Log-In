@@ -53,6 +53,7 @@ CNKD 的接口与通用 OAuth2 有几处不一致，插件里逐一处理了：
 | `state` 由平台回传并强校验 | 同 | 由 gem 生成并绑定 session |
 | 错误为中文业务文案 | 直接展示 | 映射为可本地化的友好文案 |
 | userinfo 限流 1200 次 / 10 分钟 | 无 | 结果缓存 5 分钟，仅缓存成功结果 |
+| 注册页默认要求用户手填邮箱 | 第三方给的邮箱不被信任 | 申请 `email.address` 取回明文邮箱，标记为已验证并预填锁定（见 7.4） |
 
 ---
 
@@ -113,7 +114,7 @@ cd /var/discourse && ./launcher rebuild app
 | 授权页显示名称 `displayName` | 你的论坛名称 |
 | 应用类型 `clientType` | 网站有服务端 → `confidential` |
 | 回调地址 `allowedRedirectUris` | `https://<你的域名>/auth/cnkd/callback` |
-| 申请范围 `allowedScopes` | `profile.basic profile.status` |
+| 申请范围 `allowedScopes` | `profile.basic profile.status email.address` |
 | 要求邮箱已验证 `requireEmailVerified` | `true`（建议） |
 | 启用 refresh token `allowRefreshToken` | `true` 或 `false` 均可（本插件不使用刷新令牌） |
 | 应用主页 / 隐私政策 / 用户协议 | 外部合作应用必填，且必须是 HTTPS |
@@ -121,9 +122,13 @@ cd /var/discourse && ./launcher rebuild app
 > ⚠️ **回调地址必须逐字符精确匹配**：协议、主机名、端口、路径大小写、末尾斜杠
 > 任一不同都会被拒绝（文档 5.1）。请把上表中第三行的完整地址原样提交。
 
-> ⚠️ `email.verified`、`qq.summary`、`email.address` 属敏感范围，
-> **外部合作方（`ownerType=partner`）不可申请**，申请会被平台 400 拒绝（文档 6.2）。
-> 前两者如需申请，请联系 CNKD 确认你的应用归属类型。
+> ⚠️ `email.verified`、`qq.summary` 属敏感范围，一般**外部合作方
+> （`ownerType=partner`）不可申请**，申请会被平台 400 拒绝（文档 6.2）。
+> 如需申请，请联系 CNKD 确认你的应用归属类型。
+>
+> `email.address` 不同：它用于把**邮箱明文**直接返给本站，让用户注册时
+> **不必手工填写邮箱**。只要 CNKD 为你的应用开通了该范围，开启
+> `cnkd_login_scope_email` 即可使用。建议在申请时一并勾选它。
 
 ### 3.2 在 Discourse 后台填写
 
@@ -152,10 +157,12 @@ cd /var/discourse && ./launcher rebuild app
 | `cnkd_login_enable_pkce` | PKCE 开关（`public` 应用被平台强制开启） |
 | `cnkd_login_site_url` | 保持默认 `https://cloud.cnkd.fun` |
 | `cnkd_login_button_title` | 登录按钮文案 |
+| `cnkd_login_scope_email` | 申请 `email.address`，由 CNKD 返回邮箱明文 |
+| `cnkd_login_auto_fill_email` | **邮箱直通**：注册页预填并锁定邮箱，用户免手填 |
 | `cnkd_login_request_email_verified` | 仅 CNKD 自有应用可开启 |
 | `cnkd_login_request_qq_summary` | 仅 CNKD 自有应用可开启 |
 | `cnkd_login_verbose_logging` | 记录错误详情与 `requestId`，便于报障 |
-| `cnkd_login_require_verified_email` | 邮箱未验证时拒绝登录（本地二次防御） |
+| `cnkd_login_require_verified_email` | 严格校验 `emailVerified` 字段（自动带上邮箱范围） |
 
 > 设置**不自建表单**，而是复用 Discourse 的站点设置：类型校验、权限、
 > 变更审计、多站点隔离都由核心负责。本页面专注于「看得懂 + 查得出问题」。
@@ -353,7 +360,52 @@ CNKD 后台登记值，通常比翻设置页快得多。
 报障时请提供 CNKD 返回的 `requestId` —— 插件已把它写入日志
 （`cnkd_login_verbose_logging` 开启时）。
 
-### 7.4 后台出现「已弃用」警告横幅（`.hbs`）
+### 7.4 注册时仍要求手工填写邮箱
+
+这是最常见的一个问题：CNKD 明明返回了邮箱，注册页却还要用户自己敲一遍。
+
+**先理解机制。** Discourse 的服务端建号接口把邮箱当作**必填参数**
+（`app/controllers/users_controller.rb`）：
+
+```ruby
+def create
+  params.require(:email)      # 无条件要求，OAuth 也不能省
+  params.require(:username)
+```
+
+也就是说注册表单**始终**会出现 —— 它正是 email 参数的唯一来源。
+所以目标不是「去掉这个字段」，而是让它以**已验证状态预填并锁定**，
+用户直接点「创建账号」即可。
+
+决定这一点的是 `Auth::Result#email_valid`，它的唯一赋值点是：
+
+```ruby
+result.email_valid = primary_email_verified?(auth_token) if result.email.present?
+```
+
+插件据此把 CNKD 邮箱标记为已验证。**如果仍然要求手填，按顺序查这四项**
+（后台设置页的「邮箱直通」区块会直接给出结论）：
+
+| 检查项 | 应满足 |
+| --- | --- |
+| `cnkd_login_scope_email` | 已开启（或开了下面任一项，会自动带上） |
+| CNKD 平台是否已为应用开通 `email.address` | 已开通。未开通时开启该项会导致授权被拒 |
+| `cnkd_login_auto_fill_email` | 已开启 —— 这是「邮箱直通」的总开关 |
+| 登录日志 | 出现「邮箱直通生效：xxx@yyy」字样 |
+
+日志可以快速区分三种情况：
+
+```
+邮箱直通生效：user@example.com 将作为已验证邮箱预填到注册页。   ← 正常
+本次登录未带回邮箱，注册页将要求用户手工填写。                  ← 范围没申请到
+已带回邮箱 user@example.com，但 cnkd_login_auto_fill_email 为关闭状态…  ← 开关没开
+```
+
+> 若平台尚未开通 `email.address`，则本插件无法取得邮箱原文，
+> 这个限制在平台侧，插件无法绕过。
+
+
+### 7.5 后台出现「已弃用」警告横幅（`.hbs`）
 
 如果管理员看到类似这样的横幅：
 
@@ -375,7 +427,7 @@ find plugins/discourse-cnkd-login -name "*.hbs"
 迁移方法见第 6 节「关于 `.gjs`」；官方公告：
 <https://meta.discourse.org/t/deprecating-hbs-file-extension-in-themes-and-plugins/398896>
 
-### 7.5 后台页面空白或报「组件未定义」
+### 7.6 后台页面空白或报「组件未定义」
 
 `.gjs` 是严格模式，**用到的组件必须显式 import**（`.hbs` 时代是全局解析）。
 如果页面报 `DButton is not defined` 之类，检查 `.gjs` 顶部的 import 段。
@@ -390,7 +442,7 @@ import dIcon from "discourse/ui-kit/helpers/d-icon";
 
 `script/validate.py` 可离线查出这类问题（无需浏览器）。
 
-### 7.6 静态校验（无需 Ruby 环境）
+### 7.7 静态校验（无需 Ruby 环境）
 
 ```bash
 python3 script/validate.py
