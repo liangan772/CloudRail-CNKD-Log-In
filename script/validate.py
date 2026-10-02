@@ -819,11 +819,53 @@ def check_email_passthrough():
     notes.append("邮箱直通链路完整（scope -> info -> email_valid -> after_auth 钩子）")
 
 
+# ------------------------------------------------------ 插件目录名
+def check_plugin_directory_name():
+    """插件目录名必须与 plugin.rb 的 `# name:` 一致。
+
+    Discourse 在 lib/discourse.rb 里做的检查：以 plugin.rb 所在目录的最后
+    一段（dir_name = p.path.split("/")[-2]）与 metadata.name 比对，不一致就
+    往 STDERR 打印
+
+        Plugin name is '<name>', but plugin directory is named '<dir>'
+
+    并顺手把两个名字互相别名，所以**不会**导致功能故障，但日志会一直吵，
+    而且 SiteSettingExtension 是以目录名为主索引的，别名只是补丁。
+    本插件的仓库名（CloudRail-CNKD-Log-In）与 `# name:` 不同，clone 时若不
+    指定目标目录就会触发，故在此守住。
+    """
+    name = None
+    plugin_rb = ROOT / "plugin.rb"
+    if not plugin_rb.is_file():
+        fail("找不到 plugin.rb，无法校验插件目录名")
+        return
+    for line in plugin_rb.read_text(encoding="utf-8").splitlines()[:20]:
+        m = re.match(r"^#\s*name:\s*(\S+)\s*$", line)
+        if m:
+            name = m.group(1)
+            break
+    if not name:
+        fail("plugin.rb 头部缺少 `# name:`")
+        return
+
+    dir_name = ROOT.name
+    if dir_name != name:
+        fail(
+            f"插件目录名与 `# name:` 不一致："
+            f"目录为 '{dir_name}'，而 plugin.rb 声明为 '{name}'。"
+            f"clone 时请显式指定目标目录，或把目录重命名为 '{name}'"
+            f"（见 README 7.0.1）"
+        )
+    else:
+        notes.append(f"插件目录名与 `# name:` 一致（{name}）")
+
+
 # ---------------------------------------------------------------- main
 
 def main():
     check_yaml()
     check_ruby_brackets()
+    check_plugin_directory_name()
     check_plugin_load_safety()
     check_admin_page_layout()
     check_route_map_consistency()

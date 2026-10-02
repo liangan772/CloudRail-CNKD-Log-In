@@ -59,12 +59,37 @@ CNKD 的接口与通用 OAuth2 有几处不一致，插件里逐一处理了：
 
 ## 2. 安装
 
+### 2.0 写进 containers/app.yml（Docker 标准做法）
+
+```yaml
+hooks:
+  after_code:
+    - exec:
+        cd: $home/plugins
+        cmd:
+          # ⚠️ 末尾的目标目录名不能省。省掉的话目录会取仓库名
+          # CloudRail-CNKD-Log-In，与 plugin.rb 的 `# name:` 不一致，
+          # 日志里会出现 "Plugin name is ... but plugin directory is named ..."。
+          - git clone https://github.com/liangan772/CloudRail-CNKD-Log-In.git discourse-cnkd-login
+```
+
+改完 `app.yml` 后：
+
+```bash
+cd /var/discourse && ./launcher rebuild app
+```
+
 ### 2.1 在服务器上直接 clone（推荐）
 
 ```bash
 cd /var/discourse
 
-# 目录名会决定插件名，请保持 discourse-cnkd-login
+# ⚠️ 末尾的目录名不是可选项，必须保留为 discourse-cnkd-login。
+# Discourse 用插件目录名和 plugin.rb 里的 `# name:` 做比对，不一致就打印：
+#   Plugin name is 'discourse-cnkd-login', but plugin directory is named 'X'
+# 仓库名是 CloudRail-CNKD-Log-In，直接 clone 不带目标目录就会得到这个名字，
+# 从而触发上述警告（仅警告，不致故障：Discourse 会把两个名字互相别名，
+# 站点设置仍能查到，但日志会一直吵）。
 git clone https://github.com/liangan772/CloudRail-CNKD-Log-In.git plugins/discourse-cnkd-login
 
 # 确认 plugin.rb 位置正确（若报 No such file 说明目录多套了一层）
@@ -195,6 +220,9 @@ LOAD_PLUGINS=1 bundle exec rspec plugins/discourse-cnkd-login/spec/plugin_spec.r
 
 ## 6. 目录结构
 
+> 根目录名必须是 `discourse-cnkd-login`，与 `plugin.rb` 的 `# name:` 一致。
+> 仓库名（`CloudRail-CNKD-Log-In`）与它无关。不一致时见 7.0.1。
+
 ```
 discourse-cnkd-login/
 ├── plugin.rb                                  # 插件清单与注册
@@ -320,6 +348,47 @@ mv plugins/discourse-cnkd-login /tmp/
 ./launcher rebuild app
 # 确认能起来后再移回来
 ```
+
+### 7.0.1 日志出现 `Plugin name is '...', but plugin directory is named '...'`
+
+```
+Plugin name is 'discourse-cnkd-login', but plugin directory is named 'CloudRail-CNKD-Log-In'
+```
+
+**这只是警告，不是故障。** 源码在 `lib/discourse.rb`：
+
+```ruby
+dir_name = p.path.split("/")[-2]
+if p.name != dir_name
+  STDERR.puts "Plugin name is '#{p.name}', but plugin directory is named '#{dir_name}'"
+  # Plugins are looked up by directory name in SiteSettingExtension ...
+  # We alias the two names just to make sure the look up works
+  @plugins_by_name[dir_name] = p
+end
+```
+
+也就是说 Discourse 发现不一致后，会**把两个名字互相别名**，站点设置、
+插件列表都照常工作。之所以还是建议消除它：日志会一直吵，且
+`SiteSettingExtension` 以目录名为主索引，别名终究是补丁而非正解。
+
+**成因**：clone 时没指定目标目录，目录取了仓库名 `CloudRail-CNKD-Log-In`，
+而 `plugin.rb` 里是 `# name: discourse-cnkd-login`。
+
+**处理**（任选其一，推荐第一种）：
+
+```bash
+# 1) 改 app.yml，给 clone 补上目标目录，然后重建
+#    - git clone https://github.com/liangan772/CloudRail-CNKD-Log-In.git discourse-cnkd-login
+
+# 2) 或在服务器上直接把目录改名（目录名是唯一判据，改完重建即可）
+cd /var/discourse/plugins
+mv CloudRail-CNKD-Log-In discourse-cnkd-login
+cd /var/discourse && ./launcher rebuild app
+```
+
+> 不建议反过来改 `# name:` 去迁就目录名。`# name:` 是插件的稳定标识，
+> 已被既有安装引用；而且本插件的 `PLUGIN_NAME` 常量、日志前缀、
+> 文档路径全都围绕 `discourse-cnkd-login` 展开。
 
 ### 7.1 用后台设置页面自检（推荐）
 
