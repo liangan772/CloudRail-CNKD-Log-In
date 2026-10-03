@@ -1041,7 +1041,14 @@ def check_login_button_icon():
     icon = m.group(1)
 
     # 2) 必须登记进 sprite 白名单
-    if f'register_svg_icon "{icon}"' not in plugin:
+    #
+    # ⚠️ 不能在整份源码里做裸的 `in` 判断：注释里也写着
+    #    `register_svg_icon "cnkd"`（用于解释机制），一旦真调用被注释掉，
+    #    裸字符串判断仍会命中注释文本 → 漏检。所以先剥掉整行注释再判断。
+    active_lines = [
+        ln for ln in plugin.splitlines() if not ln.lstrip().startswith("#")
+    ]
+    if f'register_svg_icon "{icon}"' not in "\n".join(active_lines):
         fail(
             f'plugin.rb 缺少 register_svg_icon "{icon}" —— '
             f"该名字不会进入 sprite 的按需打包白名单，图标可能不显示"
