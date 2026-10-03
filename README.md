@@ -232,6 +232,8 @@ File.dirname(plugin.path) + "/svg-icons/*.svg"   # => 插件目录/svg-icons/
   看不见的黑色块；用 `currentColor` 才能跟随 `.btn-social` 的前景色。
 - spritesheet 必须是**外层 `<svg>` 包 `<symbol>`**（官方
   `05-themes-components/19-custom-icons` 的规定），不能是裸 `<symbol>` 作根节点。
+  漏掉外层容器时，浏览器仍能渲染，但 `dIcon` 是按 **`<symbol id>`** 从 sprite
+  里取符号的 —— 裸 `<symbol>` 不会被收进 sprite，**图标会静默消失**（不报错）。
 
 **要换成别的图标：**
 
