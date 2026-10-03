@@ -819,6 +819,89 @@ def check_email_passthrough():
     notes.append("邮箱直通链路完整（scope -> info -> email_valid -> after_auth 钩子）")
 
 
+# ------------------------------------------------- 邮箱归属冲突（防 Primary email 已被采用）
+
+def check_email_ownership_guard():
+    """守住「CNKD 邮箱撞上另一个本地账号主邮箱」的前置拦截。
+
+    背景（回看核心源码）：
+
+      app/controllers/users/omniauth_callbacks_controller.rb 的
+      handle_account_activation 对已存在的老账号执行：
+
+        user.save! if @auth_result.apply_user_attributes!
+
+      而 Auth::Result#apply_user_attributes! 在
+      `SiteSetting.auth_overrides_email || overrides_email` 为真时会写
+      `user.email = email`。本插件的 Authenticator#always_update_user_email?
+      返回 true，正好把 overrides_email 抬起来。
+
+      于是当 CNKD 返回的邮箱**恰好是另一个账号的主邮箱**时，
+      user.email 赋值撞 users 表唯一性校验，user.save! 抛
+      ActiveRecord::RecordInvalid；核心在 rescue 里把
+      errors.full_messages 原文回吐前端，用户看到的就是
+      "Primary email has already been taken / Primary email 已被采用"。
+
+    因此必须满足三点，缺一不可：
+      1. Authenticator 里有 email_owner_conflict 前置判断；
+      2. after_authenticate 在 super 之前调用它，并返回失败；
+      3. 判定保守 —— 只拦「邮箱拥有者已绑定别的 CNKD sub」的情形，
+         不能误伤核心按邮箱关联（match_by_email）的正常老账号首登。
+    """
+    auth = (ROOT / "lib/cnkd/authenticator.rb").read_text(encoding="utf-8")
+
+    if "def email_owner_conflict" not in auth:
+        fail(
+            "authenticator.rb 缺少 email_owner_conflict —— "
+            "CNKD 邮箱撞上其他账号主邮箱时，会把核心的裸校验错误"
+            "（Primary email has already been taken）直接抛给用户"
+        )
+        return
+
+    body = auth.split("def email_owner_conflict", 1)[1].split("\n  end", 1)[0]
+
+    # 必须用 sub 关联判断「是否同一人」，否则会误伤正常登录
+    if "provider_uid" not in body:
+        fail(
+            "email_owner_conflict 没有按 provider_uid（sub）判断是否同一人 —— "
+            "会把核心按邮箱关联的正常老账号首登也拦掉"
+        )
+
+    # 必须在 after_authenticate 里、super 之前调用
+    if "def after_authenticate" not in auth:
+        fail("authenticator.rb 缺少 after_authenticate")
+        return
+    after = auth.split("def after_authenticate", 1)[1]
+
+    if "email_owner_conflict(profile)" not in after:
+        fail("after_authenticate 没有调用 email_owner_conflict，守卫形同虚设")
+    elif after.index("email_owner_conflict(profile)") > after.index("super(auth_token"):
+        fail(
+            "email_owner_conflict 必须在 super(auth_token, ...) 之前调用 —— "
+            "放到 super 之后就来不及拦截核心的 user.save! 了"
+        )
+
+    # 必须映射到 i18n 文案，否则前台只会显示 key
+    if ":email_already_taken" not in after:
+        fail("after_authenticate 没有返回 :email_already_taken 失败文案")
+
+    note = "邮箱归属冲突已前置拦截（email_already_taken）"
+    notes.append(note)
+
+
+def check_email_conflict_locale():
+    """email_already_taken 必须在服务端 locale 里存在且中英对称。"""
+    for fname in ("config/locales/server.zh_CN.yml", "config/locales/server.en.yml"):
+        path = ROOT / fname
+        if not path.is_file():
+            fail(f"缺少 {fname}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "email_already_taken:" not in text:
+            fail(f"{fname} 缺少 login.cnkd.errors.email_already_taken 文案")
+    notes.append("email_already_taken 错误文案已在中英 locale 中登记")
+
+
 # ------------------------------------------------------ 插件目录名
 def check_plugin_directory_name():
     """插件目录名必须与 plugin.rb 的 `# name:` 一致。
@@ -871,6 +954,8 @@ def main():
     check_route_map_consistency()
     check_health_check_ids()
     check_email_passthrough()
+    check_email_ownership_guard()
+    check_email_conflict_locale()
     client_keys, server_keys = check_locale_symmetry()
     check_referenced_keys(client_keys, server_keys)
     check_template_keys(client_keys)

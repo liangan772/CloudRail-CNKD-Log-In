@@ -473,6 +473,59 @@ result.email_valid = primary_email_verified?(auth_token) if result.email.present
 > 若平台尚未开通 `email.address`，则本插件无法取得邮箱原文，
 > 这个限制在平台侧，插件无法绕过。
 
+### 7.4.1 登录时报 `Primary email 已被采用` / `Primary email has already been taken`
+
+这是**邮箱归属冲突**，不是故障，是数据状态问题。
+
+**机制。** 本插件的 `Authenticator#always_update_user_email?` 返回 `true`
+（CNKD 是权威身份源，本地邮箱要跟随上游变化）。这让核心里
+`Auth::Result#overrides_email` 为真，于是**老账号登录**时会执行：
+
+```ruby
+# app/controllers/users/omniauth_callbacks_controller.rb
+user.save! if @auth_result.apply_user_attributes!
+```
+
+而 `apply_user_attributes!` 里有 `user.email = email`。若 CNKD 返回的邮箱
+**正好是另一个本地账号的主邮箱**，这句赋值就撞上 `users` 表的唯一性校验，
+`user.save!` 抛 `ActiveRecord::RecordInvalid`，核心在 `rescue` 里把
+`errors.full_messages` 原文回吐到前端 —— 也就是你看到的那句话。
+
+> 注意 `email_valid` / `always_update_user_email?` 两者是一套的：
+> 前者让注册页免手填，后者让老账号同步邮箱。这次的报错来自后者。
+
+**典型触发路径：**
+
+1. 用户早就用 `abc@qq.com` 在论坛注册过一个账号；
+2. 之后又用同一个 CNKD 账号登录（CNKD 那边也是 `abc@qq.com`）；
+3. 两个身份指向同一邮箱，但分属两个 `users` 记录 → 撞库。
+
+**插件已做的拦截。** `Authenticator#email_owner_conflict` 会在
+`after_authenticate` 调用 `super` 之前先行判断，命中则直接返回
+`login.cnkd.errors.email_already_taken`，用户看到的是可读文案而不再是核心的裸报错：
+
+> 该 CNKD 邮箱已在本站注册过另一个账号（abc@qq.com）。请改用那个账号登录，或先绑定 CNKD 后再试。
+
+判定刻意保守，**只拦真冲突**：
+
+| 情形 | 处理 | 原因 |
+| --- | --- | --- |
+| 邮箱无主 | 放行 | 首次建号 |
+| 邮箱属于「已绑定**本次** CNKD sub」的账号 | 放行 | 就是本人 |
+| 邮箱属于「尚未绑定任何 CNKD」的既有账号 | 放行 | 核心 `match_by_email` 的正常关联 |
+| 邮箱属于「已绑定**另一个** CNKD sub」的账号 | **拦截** | 必定撞 `users` 唯一索引 |
+
+**管理员如何处理这类冲突**（二选一）：
+
+- 让用户用**原有账号**登录，然后到
+  `个人设置 → 账号 → 已关联账号` 把 CNKD 绑定上去（会走 `reconnect` 流程，不撞库）；
+- 或确认旧账号确实作废后，将其邮箱改掉/删除，再让用户用 CNKD 重新注册。
+
+> 如果这类冲突在你的站点很常见，说明「同一个人先后用邮箱注册 + 用 CNKD 登录」
+> 是常态。此时更合适的是**保留** `always_update_user_email?` 为 `true`
+> （CNKD 变更邮箱能同步），靠本插件的前置拦截给出可读提示即可，
+> 不必关闭 —— 关掉只会让 CNKD 侧改了邮箱后本站一直停在旧地址。
+
 
 ### 7.5 后台出现「已弃用」警告横幅（`.hbs`）
 
@@ -525,6 +578,8 @@ python3 script/validate.py
 - 后台页面布局符合官方约定（route map 挂 `.show`、模板为 `.gjs`）
 - **禁止任何 `.hbs` 残留**
 - `.gjs` 严格模式：组件必须已 import、禁止字符串 action、属性必须带 `this.`
+- 邮箱直通链路（scope → info → email_valid → `:after_auth` 钩子）四环齐全
+- 邮箱归属冲突前置拦截（`email_owner_conflict` 必须先于 `super`，且中英文案存在）
 
 ## License
 

@@ -67,6 +67,13 @@ cnkd_login:
   #
   # 关闭后，即使拿到了邮箱也只会是普通文本，Discourse 仍要求用户
   # 在注册页自己填写并验证 —— 排查「为什么还要填邮箱」时先看这里。
+  #
+  # ⚠️ 已知副作用（非本开关引入，而是 always_update_user_email? = true 所致）：
+  #    老账号登录时核心会执行 `user.save! if apply_user_attributes!`，
+  #    把 CNKD 邮箱写回本地。若该邮箱已属于另一个本地账号，会撞 users 表
+  #    唯一性校验并报「Primary email 已被采用」。插件已用
+  #    Authenticator#email_owner_conflict 前置拦截，改为可读文案
+  #    （login.cnkd.errors.email_already_taken）。详见 README 7.4.1。
   cnkd_login_auto_fill_email:
     default: false
 

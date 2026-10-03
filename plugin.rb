@@ -249,6 +249,11 @@ on(:after_auth) do |authenticator, result|
   # 只管自己，别影响其他登录方式
   next unless authenticator.name == "cnkd"
 
+  # 已判定失败的结果不许再动 —— 尤其别把 email_valid 抬成 true，
+  # 否则可能让一条本该失败的登录（如邮箱归属冲突 email_already_taken）
+  # 又“活”过来。
+  next if result.failed?
+
   email = result.email.presence || result.extra_data&.dig(:cnkd_email)
 
   if email.blank?

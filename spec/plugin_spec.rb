@@ -450,6 +450,94 @@ RSpec.describe DiscourseCnkdLogin do
     end
   end
 
+  # ------------------------------------------ 邮箱归属冲突（Primary email 已被采用）
+
+  # 核心的 handle_account_activation 在老账号登录时会执行
+  #   user.save! if @auth_result.apply_user_attributes!
+  # 而 apply_user_attributes! 因 overrides_email（always_update_user_email? = true）
+  # 会写 user.email。若该邮箱已被另一个账号占用，users 表唯一性校验失败，
+  # 核心把 errors.full_messages 原文回吐 —— 用户看到 "Primary email has
+  # already been taken"。本组断言确保插件在此之前就拦下来。
+  describe "邮箱归属冲突前置拦截" do
+    let(:authenticator) { DiscourseCnkdLogin::Authenticator.new }
+    let(:plugin_source) { File.read(File.expand_path("../plugin.rb", __dir__)) }
+    # authenticator.rb 中 after_authenticate 之后、到文件末的全部源码
+    let(:authenticator_after_auth_body) do
+      File.read(File.expand_path("../lib/cnkd/authenticator.rb", __dir__)).split(
+        "def after_authenticate",
+        1,
+      )[1]
+    end
+
+    def profile_for(email, sub_value: sub)
+      userinfo_payload["data"].merge("email" => email, "sub" => sub_value)
+    end
+
+    it "邮箱无主（还没有任何账号用它）时不拦截" do
+      expect(authenticator.send(:email_owner_conflict, profile_for("nobody@example.com"))).to be_nil
+    end
+
+    it "邮箱属于另一个已绑定 CNKD 的账号时判定为冲突" do
+      owner = Fabricate(:user, email: "taken@example.com")
+      UserAssociatedAccount.create!(
+        user: owner,
+        provider_name: "cnkd",
+        provider_uid: "other-sub-uuid",
+      )
+
+      expect(authenticator.send(:email_owner_conflict, profile_for("taken@example.com"))).to eq(
+        "taken@example.com",
+      )
+    end
+
+    # 这是核心 match_by_email 想要的「同邮箱即同人」关联，不能拦
+    it "邮箱属于尚未绑定 CNKD 的既有账号时不拦截（交给核心按邮箱关联）" do
+      Fabricate(:user, email: "legacy@example.com")
+
+      expect(authenticator.send(:email_owner_conflict, profile_for("legacy@example.com"))).to be_nil
+    end
+
+    # 本 sub 已绑定该邮箱拥有者 -> 就是本人，放行
+    it "邮箱拥有者已绑定本次 sub 时不拦截" do
+      owner = Fabricate(:user, email: "mine@example.com")
+      UserAssociatedAccount.create!(user: owner, provider_name: "cnkd", provider_uid: sub)
+
+      expect(authenticator.send(:email_owner_conflict, profile_for("mine@example.com"))).to be_nil
+    end
+
+    it "没带回邮箱时不拦截" do
+      expect(
+        authenticator.send(:email_owner_conflict, userinfo_payload["data"]),
+      ).to be_nil
+    end
+
+    it "失败文案 email_already_taken 在两种语言下都有" do
+      %w[zh_CN en].each do |loc|
+        translated =
+          I18n.t(
+            "login.cnkd.errors.email_already_taken",
+            locale: loc,
+            detail: "taken@example.com",
+          )
+        expect(translated).not_to include("translation missing")
+      end
+    end
+
+    # 守卫必须在 super 之前调用，否则核心的 user.save! 已经抛错了
+    it "在 after_authenticate 中先于 super 调用" do
+      expect(authenticator_after_auth_body).to include("email_owner_conflict(profile)")
+      expect(
+        authenticator_after_auth_body.index("email_owner_conflict(profile)"),
+      ).to be < authenticator_after_auth_body.index("super(auth_token")
+    end
+
+    # :after_auth 钩子不能把已失败的结果救活
+    it ":after_auth 钩子遇到 failed 结果直接跳过" do
+      hook = plugin_source.split("on(:after_auth)", 1)[1]
+      expect(hook).to include("next if result.failed?")
+    end
+  end
+
   # ------------------------------------------------------- 启动体检（非死代码）
 
   describe "启动体检" do

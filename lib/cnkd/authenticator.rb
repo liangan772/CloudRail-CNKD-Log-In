@@ -88,6 +88,30 @@ class DiscourseCnkdLogin::Authenticator < Auth::ManagedAuthenticator
   #
   # ⚠️ 生效前提是 email_valid 必须为真（见 primary_email_verified?），
   #    否则这段同步根本不会被触发 —— 两个条件是一套的。
+  #
+  # ⚠️⚠️ 与 Discourse 核心的一个冲突（「Primary email 已被采用」的成因）：
+  #
+  #     overrides_email 为真会让核心在**老用户登录**时也执行
+  #     `user.save!`（app/controllers/users/omniauth_callbacks_controller.rb
+  #     的 handle_account_activation）：
+  #
+  #        user.save! if @auth_result.apply_user_attributes!
+  #
+  #     apply_user_attributes! 里有 `user.email = email`。
+  #     如果 CNKD 返回的邮箱**恰好是另一个本地账号的主邮箱**
+  #     （典型场景：用户先用 QQ 邮箱在论坛注册过一次，之后又用
+  #     同一 QQ 邮箱走 CNKD 登录），user.email 会撞上 users 表的
+  #     唯一性索引，抛 ActiveRecord::RecordInvalid，核心把
+  #     errors.full_messages 原文回吐到前端 —— 用户看到的就是
+  #     "Primary email has already been taken / Primary email 已被采用"。
+  #
+  #     所以这里不能无条件返回 true：只在「这个邮箱确实属于他自己」
+  #     时才允许覆盖。判断逻辑见 can_override_email_to?，
+  #     在 after_authenticate 里提前拦截，避免把核心的裸报错抛给用户。
+  #
+  #     注：always_update_user_email? 无参数，无法拿到用户上下文，
+  #     因此这里保持 true（保留「CNKD 是权威源」的语义），
+  #     真正的护栏放在 after_authenticate 的前置检查里。
   def always_update_user_email?
     true
   end
@@ -201,6 +225,19 @@ class DiscourseCnkdLogin::Authenticator < Auth::ManagedAuthenticator
       ::DiscourseCnkdLogin::AccountMatcher.build_extra(profile),
     )
 
+    # 4.5) 邮箱归属冲突前置拦截（防「Primary email 已被采用」）
+    #
+    #      见 always_update_user_email? 的注释。核心在 handle_account_activation
+    #      里对老用户执行 `user.save! if @auth_result.apply_user_attributes!`，
+    #      而 apply_user_attributes! 会写 user.email。若该邮箱已被**另一个**
+    #      本地账号占用，user.save! 抛 RecordInvalid，核心把
+    #      errors.full_messages 原样吐给用户 —— 极难理解。
+    #
+    #      这里提前判断：CNKD 邮箱若指向另一个账号，直接返回一条能看懂的
+    #      失败文案，而不是让核心抛裸报错。
+    conflict = email_owner_conflict(profile)
+    return failure(:email_already_taken, detail: conflict) if conflict
+
     # 5) 交给 ManagedAuthenticator 完成本地账号的查找 / 创建 / 资料同步。
     #
     #    里面按顺序做三件事（核心源码 lib/auth/managed_authenticator.rb）：
@@ -243,6 +280,55 @@ class DiscourseCnkdLogin::Authenticator < Auth::ManagedAuthenticator
   end
 
   private
+
+  # 判断「CNKD 带回的邮箱是否已属于另一个本地账号」。
+  #
+  # 返回冲突的邮箱（用于日志）或 nil。
+  #
+  # 为什么要拦：核心的 handle_account_activation 在老用户登录时会执行
+  #   user.save! if @auth_result.apply_user_attributes!
+  # 而 apply_user_attributes! 因 overrides_email（= always_update_user_email?
+  # 为 true）会写 user.email。若此时邮箱已被**另一个**账号占用，users 表
+  # 唯一性校验失败，核心把 `errors.full_messages`（"Primary email has
+  # already been taken"）原样回吐到前端 —— 用户完全看不懂。
+  #
+  # ⚠️ 判定必须保守，只拦「确实会撞库」的情形，否则会误伤正常登录：
+  #
+  #   1. 本次 sub 已绑定某个本地账号 -> 放行。
+  #      老用户回访走 (cnkd, sub) 关联，即使 CNKD 那边换了邮箱，
+  #      只要新邮箱没被别人占用就不会撞库；被别人占用了则下面第 2 条兜住。
+  #
+  #   2. 邮箱的拥有者已绑定**另一个** CNKD sub -> 拦截。
+  #      这是真正的「同一个邮箱、两个不同 CNKD 身份」，
+  #      核心的 user.email 赋值必定撞 users 表唯一索引。
+  #
+  #   3. 邮箱的拥有者尚未绑定任何 CNKD sub -> 放行。
+  #      这正是核心 match_by_email 想做的「同邮箱即同人」关联，
+  #      属于预期行为，不能拦（拦了会破坏正常的老账号首登）。
+  def email_owner_conflict(profile)
+    email = ::DiscourseCnkdLogin::AccountMatcher.normalized_email(profile)
+    return if email.blank?
+
+    owner = User.find_by_email(email)
+    return if owner.nil?
+
+    # 1) 本次 sub 已绑定到「邮箱拥有者」，说明就是本人 -> 放行
+    same_person =
+      UserAssociatedAccount.exists?(
+        provider_name: name,
+        provider_uid: profile["sub"],
+        user_id: owner.id,
+      )
+    return if same_person
+
+    # 3) 邮箱拥有者还没绑定任何 CNKD 账号 -> 交给核心按邮箱关联 -> 放行
+    owner_bound_to_cnkd =
+      UserAssociatedAccount.exists?(provider_name: name, user_id: owner.id)
+    return unless owner_bound_to_cnkd
+
+    # 2) 邮箱拥有者绑定了别的 CNKD sub -> 真冲突
+    email
+  end
 
   def revoke_remote(token)
     conn = Faraday.new(url: DiscourseCnkdLogin.site_url) do |f|
