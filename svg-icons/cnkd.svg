@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CNKD 一证通行 · 登录按钮图标（Discourse SVG spritesheet）
+
+  ⚠️ 格式要求（官方 05-themes-components/19-custom-icons 明确规定）：
+     外层必须是 <svg> 容器，图标本体放在 <symbol> 里 ——
+     不是裸 <symbol>，也不是普通的独立 SVG。
+     内层就是原图标 <svg> 标签之间的内容，外层 <svg> 换成 <symbol>，
+     并把原 <svg> 上的 viewBox 转移到 <symbol> 上。
+
+  为什么用 currentColor：按钮颜色由主题决定（.btn-social 的前景色），
+  写死 #000 会在暗色主题下变成看不见的黑块。官方也明确建议
+  「set the fill to currentColor rather than a hardcoded color」。
+
+  路径与命名（插件场景，见 lib/svg_sprite.rb 的 plugin_svgs）：
+    · 文件位置：<插件目录>/svg-icons/*.svg
+      （plugin.path 指向 plugin.rb，File.dirname 即插件目录本身）
+    · 图标名取自 <symbol id="...">，与文件名无关。
+    · plugin.rb 里的 register_svg_icon "cnkd" 只把该名字纳入 sprite 的
+      按需打包白名单（all_icons），不负责读取本文件。
+
+  图形：圆角方形，中间以 even-odd/nonzero 规则挖出字母 C。
+-->
+
+  <symbol id="cnkd" viewBox="0 0 1792 1792">
+    <path fill="currentColor" d="M336 0h1120q139 0 237.5 98.5T1792 336v1120q0 139-98.5 237.5T1456 1792H336q-139 0-237.5-98.5T0 1456V336Q0 197 98.5 98.5T336 0m-37 896q0 162 80 299.5T596.5 1413t299.5 80q192 0 340.5-98.5T1449 1127q30-81-23-81h-186q-20 0-32 4t-16 7.5t-15 19.5t-18 25q-47 60-116 95t-149 35q-140 0-238.5-98.5T557 896t98.5-237.5T894 560q80 0 149 35t116 95q6 8 13 18l10.5 15l8.5 10.5l11 7.5l15.5 3.5l22.5 1.5h186q53 0 23-81q-64-169-212.5-267.5T896 299q-162 0-299.5 80T379 596.5T299 896"/>
+  </symbol>

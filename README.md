@@ -192,6 +192,59 @@ cd /var/discourse && ./launcher rebuild app
 > 设置**不自建表单**，而是复用 Discourse 的站点设置：类型校验、权限、
 > 变更审计、多站点隔离都由核心负责。本页面专注于「看得懂 + 查得出问题」。
 
+### 3.3 登录按钮的图标
+
+登录按钮的图标是**随插件走的**（`svg-icons/cnkd.svg`），不需要管理员配置。
+
+图标生效靠三段式，**缺一不可**：
+
+| 环节 | 位置 | 作用 |
+| --- | --- | --- |
+| ① 图形 | `svg-icons/cnkd.svg` | SVG spritesheet，内含 `<symbol id="cnkd">` |
+| ② 白名单 | `plugin.rb` 的 `register_svg_icon "cnkd"` | 把名字登记进 sprite 的**按需打包**白名单 |
+| ③ 下发 | `plugin.rb` 的 `auth_provider ..., icon: "cnkd"` | 经 `icon_override` 下发到前端 |
+
+链路依据（核心源码）：
+
+```js
+// frontend/discourse/app/components/login-buttons.gjs
+{{#if b.icon}} {{dIcon b.icon}} {{else}} {{dIcon "right-to-bracket"}} {{/if}}
+```
+
+```ruby
+# app/serializers/auth_provider_serializer.rb
+def icon_override
+  object.icon_setting ? SiteSetting.get(object.icon_setting) : object.icon
+end
+```
+
+```ruby
+# lib/svg_sprite.rb —— 插件 sprite 的查找路径
+File.dirname(plugin.path) + "/svg-icons/*.svg"   # => 插件目录/svg-icons/
+```
+
+**要点：**
+
+- 图标名取自 `<symbol id="...">`，**与文件名无关**；`dIcon` 就是按这个 id 查的。
+- `register_svg_icon` **不读取文件**，只登记名字（`Set << name`）。
+  少了它，即使 `cnkd.svg` 在，图标也可能不被打进 sprite。
+- 图标必须写 `fill="currentColor"`。写死 `#000` 会在**暗色主题**下变成
+  看不见的黑色块；用 `currentColor` 才能跟随 `.btn-social` 的前景色。
+- spritesheet 必须是**外层 `<svg>` 包 `<symbol>`**（官方
+  `05-themes-components/19-custom-icons` 的规定），不能是裸 `<symbol>` 作根节点。
+
+**要换成别的图标：**
+
+1. 把新图标加工成 spritesheet（外层 `<svg style="display:none">` + `<symbol id="cnkd">`，
+   原 `<svg>` 的 `viewBox` 移到 `<symbol>` 上，`fill` 改 `currentColor`）；
+2. 覆盖 `svg-icons/cnkd.svg` 即可 —— 只要 `<symbol id>` 仍是 `cnkd`，
+   ② ③ 两处都不用改；
+3. `./launcher rebuild app`（改了磁盘文件，必须重建）。
+
+> 想让管理员能在后台**更换**图标（而不是换文件），把 `plugin.rb` 里的
+> `icon: "cnkd"` 换成 `icon_setting: :<某个设置名>` 即可，
+> 与 `title_setting` 的机制完全一致（注意该设置需要 `client: true`）。
+
 
 ---
 
@@ -246,6 +299,8 @@ discourse-cnkd-login/
 │       └── client.en.yml / client.zh_CN.yml    # 登录按钮 + 后台页面文案
 ├── docs/
 │   └── plugin-admin-interfaces.reference.md   # 官方后台界面约定（存档备查）
+├── svg-icons/
+│   └── cnkd.svg                               # 登录按钮图标（SVG spritesheet）
 ├── lib/
 │   ├── omniauth/strategies/cnkd.rb            # OAuth2 策略（JSON 信封适配）
 │   └── cnkd/
@@ -572,6 +627,38 @@ auth_provider authenticator: DiscourseCnkdLogin::Authenticator.new,
 > 只有当站点设置为空时才使用。改站点设置才是正道。
 
 
+### 7.4.3 登录按钮图标不显示 / 显示成默认图标
+
+按钮上是 Discourse 默认的 `right-to-bracket`（一个「→]」箭头），不是 CNKD 图标。
+
+**机制。** 前端 `login-buttons.gjs`：
+
+```js
+{{#if b.icon}} {{dIcon b.icon}} {{else}} {{dIcon "right-to-bracket"}} {{/if}}
+```
+
+`b.icon` 为空就回落默认图标；`dIcon` 再从 **SVG sprite** 里按 `<symbol id>` 查找。
+所以问题只可能出在三处（对应 §3.3 的三段式）：
+
+| 检查项 | 应满足 |
+| --- | --- |
+| ① `svg-icons/cnkd.svg` | 文件存在，且含 `<symbol id="cnkd">`；外层是 `<svg>` 而不是裸 `<symbol>` |
+| ② `register_svg_icon "cnkd"` | `plugin.rb` 里有这行（**不能写在注释里**） |
+| ③ `icon: "cnkd"` | `auth_provider` 传了它，且名字与 `<symbol id>` **逐字符一致** |
+| 是否重建 | `svg-icons/` 与 `plugin.rb` 都是磁盘文件，改完必须 `./launcher rebuild app` |
+
+常见误因：
+
+- **图标名不匹配**：`<symbol id="cnkd-square">` 但 `icon: "cnkd"` ——
+  名字取自 `<symbol id>`，与**文件名无关**，两处必须一致。
+- **裸 `<symbol>` 作根节点**：不是合法 spritesheet，spritesheet 必须外层 `<svg>` 包 `<symbol>`。
+- **只在注释里写了 `register_svg_icon`**：那是死代码，必须真实调用。
+- **改了文件只 `restart`**：磁盘文件不会重新打包，必须 `rebuild`。
+
+> 快速自查：`python3 script/validate.py` 会一次性把这三段都查一遍
+> （含 spritesheet 格式与 `currentColor` 检查）。
+
+
 ### 7.5 后台出现「已弃用」警告横幅（`.hbs`）
 
 如果管理员看到类似这样的横幅：
@@ -626,6 +713,8 @@ python3 script/validate.py
 - 邮箱直通链路（scope → info → email_valid → `:after_auth` 钩子）四环齐全
 - 邮箱归属冲突前置拦截（`email_owner_conflict` 必须先于 `super`，且中英文案存在）
 - 登录按钮文案接线（`title_setting` 已传、指向的设置存在/默认非空/`client: true`）
+- 登录按钮图标接线（`svg-icons/*.svg` 含对应 `<symbol id>`、spritesheet 格式正确、
+  用了 `currentColor`、`register_svg_icon` 与 `icon:` 都已登记）
 
 ## License
 

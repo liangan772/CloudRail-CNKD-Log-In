@@ -987,6 +987,112 @@ def check_button_title_setting():
     notes.append(f"登录按钮文案已接线（title_setting -> {setting}，client 可见）")
 
 
+# ------------------------------------------------- 登录按钮图标（sprite + 注册）
+
+def check_login_button_icon():
+    """守住「登录按钮用自定义图标」这条三段式链路。
+
+    背景（回看核心源码）：
+
+      · 前端 frontend/discourse/app/components/login-buttons.gjs：
+          {{#if b.icon}} {{dIcon b.icon}} {{else}} {{dIcon "right-to-bracket"}} {{/if}}
+        图标名取 b.icon，经序列化后落到 icon_override。
+
+      · 服务端 app/serializers/auth_provider_serializer.rb：
+          def icon_override
+            object.icon_setting ? SiteSetting.get(object.icon_setting) : object.icon
+          end
+        所以图标名来自 auth_provider 的 icon（或 icon_setting）。
+
+      · dIcon 从 SVG sprite 里按 <symbol id> 查找，不是图片 URL。
+        sprite 的插件来源见 lib/svg_sprite.rb#plugin_svgs：
+            File.dirname(plugin.path) + "/svg-icons/*.svg"
+        （plugin.path 指向 plugin.rb，故即 <插件目录>/svg-icons/）
+        图标名取自 <symbol id="...">，**与文件名无关**。
+
+      · DiscoursePluginRegistry.register_svg_icon 只是把名字塞进
+        Set（svg_icons），汇入 SvgSprite.all_icons 做按需打包，
+        **不读取文件**；少了它图标可能不被打进 sprite。
+
+    所以三段缺一不可：
+      1. svg-icons/*.svg 存在，且含 <symbol id="<icon>">（spritesheet 格式）
+      2. plugin.rb 有 register_svg_icon "<icon>"（进白名单）
+      3. auth_provider 传了 icon: "<icon>"（下发前端）
+
+    另：spritesheet 必须是外层 <svg> 包 <symbol>，且建议 fill="currentColor"，
+    否则在暗色主题下会出现看不见的色块（官方 19-custom-icons 明确规定）。
+    """
+    plugin = (ROOT / "plugin.rb").read_text(encoding="utf-8")
+
+    call_m = re.search(r"^auth_provider\b(.*?)(?=^\S|\Z)", plugin, re.DOTALL | re.MULTILINE)
+    if not call_m:
+        return
+    call = call_m.group(1)
+
+    m = re.search(r'\bicon:\s*"([^"]+)"', call)
+    if not m:
+        # 也可能用 icon_setting（管理员可换图标），此时不强制要求 sprite 存在
+        if re.search(r"icon_setting:\s*:\w+", call):
+            notes.append("登录按钮图标走 icon_setting（由管理员选择），跳过 sprite 检查")
+            return
+        fail("auth_provider 没有传 icon —— 登录按钮会回落到默认的 right-to-bracket 图标")
+        return
+
+    icon = m.group(1)
+
+    # 2) 必须登记进 sprite 白名单
+    if f'register_svg_icon "{icon}"' not in plugin:
+        fail(
+            f'plugin.rb 缺少 register_svg_icon "{icon}" —— '
+            f"该名字不会进入 sprite 的按需打包白名单，图标可能不显示"
+        )
+
+    # 1) sprite 文件必须存在且含该 <symbol id>
+    sprite_files = sorted((ROOT / "svg-icons").glob("*.svg")) if (ROOT / "svg-icons").is_dir() else []
+    if not sprite_files:
+        fail(
+            "缺少 svg-icons/*.svg —— 自定义图标必须是 spritesheet，"
+            "放在插件目录的 svg-icons/ 下"
+        )
+        return
+
+    found_symbol = False
+    has_current_color = False
+    for f in sprite_files:
+        text = f.read_text(encoding="utf-8")
+        if re.search(rf'<symbol[^>]*\bid="{re.escape(icon)}"', text):
+            found_symbol = True
+            if 'currentColor' in text:
+                has_current_color = True
+
+    if not found_symbol:
+        fail(
+            f'svg-icons/ 下没有任何 <symbol id="{icon}"> —— '
+            f"dIcon 会查不到该名字并回落到默认图标"
+        )
+
+    # 必须是 outer <svg> 包 <symbol> 的 spritesheet 格式
+    for f in sprite_files:
+        text = f.read_text(encoding="utf-8")
+        if re.search(rf'<symbol[^>]*\bid="{re.escape(icon)}"', text):
+            # ⚠️ 先剥注释，再剥 XML 声明（<?xml ... ?>）——
+            #    官方示例就带 XML prolog，漏掉它会误判成「根节点不是 <svg>」。
+            stripped = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+            stripped = re.sub(r"^\s*<\?xml[^>]*\?>", "", stripped).strip()
+            if not stripped.startswith("<svg"):
+                fail(
+                    f"{f.relative_to(ROOT)} 的外层必须是 <svg> 容器、内部放 <symbol> —— "
+                    f"官方 spritesheet 格式不允许裸 <symbol> 作根节点"
+                )
+            if not has_current_color:
+                fail(
+                    f"{f.relative_to(ROOT)} 的图标未使用 fill=\"currentColor\" —— "
+                    f"写死颜色会在暗色主题下显示成看不见的色块"
+                )
+
+    notes.append(f'登录按钮图标已接线（sprite <symbol id="{icon}"> + register_svg_icon + icon）')
+
+
 # ------------------------------------------------------ 插件目录名
 def check_plugin_directory_name():
     """插件目录名必须与 plugin.rb 的 `# name:` 一致。
@@ -1042,6 +1148,7 @@ def main():
     check_email_ownership_guard()
     check_email_conflict_locale()
     check_button_title_setting()
+    check_login_button_icon()
     client_keys, server_keys = check_locale_symmetry()
     check_referenced_keys(client_keys, server_keys)
     check_template_keys(client_keys)

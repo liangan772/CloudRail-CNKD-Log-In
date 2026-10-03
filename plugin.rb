@@ -38,6 +38,7 @@ enabled_site_setting :cnkd_login_enabled
 #       admin-plugins/show/cnkd-login/index.gjs
 #                                       —— 页面本体（.gjs，模板 + 控制器合一）
 #   assets/stylesheets/common/cnkd-login-admin.scss
+#   svg-icons/cnkd.svg                  —— 登录按钮图标（SVG spritesheet）
 #
 # 关于 .gjs：Discourse 自 2026.3 起弃用 .hbs（主题与插件），
 # 2026.7 ESR 是最后一个支持 .hbs 的版本，2026.8.0-latest 起计划移除。
@@ -194,6 +195,32 @@ require_relative "lib/cnkd/health_check"
 require_relative "lib/cnkd/preview_renderer"
 require_relative "lib/cnkd/authenticator"
 
+# CNKD 登录按钮图标。
+#
+# ── 图标是怎么生效的（三段式，缺一不可）──
+#
+#   1. 图形文件：svg-icons/cnkd.svg
+#      必须是 Discourse 的 spritesheet 格式 —— 外层 <svg>，里面 <symbol id="cnkd">。
+#      SvgSprite 会把该 <symbol> 合并进全局 sprite（`<svg style="display:none">`），
+#      之后就能按 id 查找。图标名取自 <symbol id>，与文件名无关。
+#      （路径见 lib/svg_sprite.rb 的 plugin_svgs：
+#        File.dirname(plugin.path) + "/svg-icons/*.svg"，即插件目录下的 svg-icons/）
+#
+#   2. 本行的 register_svg_icon "cnkd"
+#      ⚠️ 它**不读取文件**，只是把名字登记进 DiscoursePluginRegistry.svg_icons，
+#         汇入 SvgSprite.all_icons 的「按需打包白名单」。
+#         少了它，即便文件存在，该图标也可能不被打进 sprite。
+#
+#   3. auth_provider 的 icon: "cnkd"（见下方）
+#      它经 AuthProviderSerializer#icon_override 下发到前端，最终被
+#      login-buttons.gjs 里的 {{dIcon b.icon}} 消费。
+#
+# 前端兜底：login-buttons.gjs 里是
+#     {{#if b.icon}} {{dIcon b.icon}} {{else}} {{dIcon "right-to-bracket"}} {{/if}}
+# 所以图标名写错/取不到时，按钮会回落到 Discourse 默认的 "right-to-bracket"，
+# 不会白屏，但图标不是我们的 —— 排查时先看 sprite 里有没有 <symbol id="cnkd">。
+register_svg_icon "cnkd"
+
 # 注册认证提供方。
 #
 # 官方文档明确要求：必须早于 after_initialize 注册，否则 OmniAuth 中间件
@@ -227,10 +254,15 @@ require_relative "lib/cnkd/authenticator"
 #    「已关联账号」等处的简短名称，属于不可本地化改动的稳定标识。
 #    若也要可改，再加 pretty_name_setting，但没必要。
 #
-# 关于 icon：Auth::AuthProvider.auth_attributes 只接受 authenticator /
-# custom_url / frame_height / frame_width / icon / icon_setting /
-# pretty_name / pretty_name_setting / title / title_setting。
-# 不传的项都是 nil，序列化到前端后 icon 会回落到默认的 "user"。
+# ── 按钮图标 ──
+#
+# icon 与 icon_setting 的关系和 title/title_setting 完全一致
+# （AuthProviderSerializer#icon_override）：
+#   · 这里用固定的 icon: "cnkd"（图标随插件走，不需要管理员改）；
+#   · 若要允许管理员在后台换图标，可改用 icon_setting: :<某个设置>。
+# Auth::AuthProvider.auth_attributes 接受的键：
+#   authenticator / custom_url / frame_height / frame_width / icon /
+#   icon_setting / pretty_name / pretty_name_setting / title / title_setting。
 #
 # ⚠️ 不要设置 custom_url。
 # 前端 login-method.js 的逻辑是：
@@ -242,7 +274,8 @@ require_relative "lib/cnkd/authenticator"
 #   - 按钮会跳到 /auth/cnkd/callback 而不是 /auth/cnkd，直接认证失败
 # 标准 OmniAuth provider 应交给默认流程走 POST /auth/cnkd。
 auth_provider authenticator: DiscourseCnkdLogin::Authenticator.new,
-              title_setting: :cnkd_login_button_title
+              title_setting: :cnkd_login_button_title,
+              icon: "cnkd"
 
 # 邮箱直通：让「服务商已返回的邮箱」真正顶用，用户不必再手工填写。
 #

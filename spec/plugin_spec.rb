@@ -579,6 +579,54 @@ RSpec.describe DiscourseCnkdLogin do
     end
   end
 
+  # ------------------------------------------------- 登录按钮图标（sprite 三段式）
+
+  # 前端 login-buttons.gjs：
+  #   {{#if b.icon}} {{dIcon b.icon}} {{else}} {{dIcon "right-to-bracket"}} {{/if}}
+  # icon_override 来自 auth_provider 的 icon（或 icon_setting），
+  # dIcon 再从 SVG sprite 里按 <symbol id> 查找。
+  # sprite 的插件来源：lib/svg_sprite.rb#plugin_svgs
+  #   File.dirname(plugin.path) + "/svg-icons/*.svg"  →  插件目录下的 svg-icons/
+  describe "登录按钮使用自定义图标" do
+    let(:plugin_source) { File.read(File.expand_path("../plugin.rb", __dir__)) }
+    let(:sprite_dir) { File.expand_path("../svg-icons", __dir__) }
+
+    let(:auth_provider_call) do
+      plugin_source[/^auth_provider\b(.*?)(?=^\S|\Z)/m, 0].to_s
+    end
+
+    it "auth_provider 传了 icon: \"cnkd\"" do
+      expect(auth_provider_call).to include('icon: "cnkd"')
+    end
+
+    it "正式注册了 register_svg_icon \"cnkd\"（进 sprite 按需打包白名单）" do
+      # 排除注释行，必须是真实调用
+      calls = plugin_source.lines.reject { |l| l.strip.start_with?("#") }
+      expect(calls.join).to include('register_svg_icon "cnkd"')
+    end
+
+    it "存在 svg-icons/cnkd.svg" do
+      expect(File.file?(File.join(sprite_dir, "cnkd.svg"))).to eq(true)
+    end
+
+    it "sprite 是官方格式：外层 <svg> 包 <symbol id=\"cnkd\">" do
+      text = File.read(File.join(sprite_dir, "cnkd.svg"))
+      body = text.gsub(/<!--.*?-->/m, "").sub(/\A\s*<\?xml[^>]*\?>/, "").strip
+
+      expect(body).to start_with("<svg")
+      expect(text).to match(/<symbol[^>]*\bid="cnkd"/)
+      # 图标名必须来自 <symbol id>，否则 dIcon 查不到
+      expect(text).to include('viewBox="0 0 1792 1792"')
+    end
+
+    # 写死颜色会在暗色主题下变成看不见的色块（官方 19-custom-icons 明确要求）
+    it "图标使用 currentColor 以跟随主题配色" do
+      text = File.read(File.join(sprite_dir, "cnkd.svg"))
+      expect(text).to include("currentColor")
+      expect(text).not_to match(/fill="#000000"/)
+    end
+  end
+
   # ------------------------------------------------------- 启动体检（非死代码）
 
   describe "启动体检" do
