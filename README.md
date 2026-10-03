@@ -181,7 +181,7 @@ cd /var/discourse && ./launcher rebuild app
 | `cnkd_login_client_type` | `confidential`（有服务端的网站） |
 | `cnkd_login_enable_pkce` | PKCE 开关（`public` 应用被平台强制开启） |
 | `cnkd_login_site_url` | 保持默认 `https://cloud.cnkd.fun` |
-| `cnkd_login_button_title` | 登录按钮文案 |
+| `cnkd_login_button_title` | 登录页按钮文案（改完刷新登录页即生效） |
 | `cnkd_login_scope_email` | 申请 `email.address`，由 CNKD 返回邮箱明文 |
 | `cnkd_login_auto_fill_email` | **邮箱直通**：注册页预填并锁定邮箱，用户免手填 |
 | `cnkd_login_request_email_verified` | 仅 CNKD 自有应用可开启 |
@@ -527,6 +527,51 @@ user.save! if @auth_result.apply_user_attributes!
 > 不必关闭 —— 关掉只会让 CNKD 侧改了邮箱后本站一直停在旧地址。
 
 
+### 7.4.2 登录页按钮文案改了不生效
+
+到 `管理 → 设置` 搜 `cnkd_login_button_title` 改了值，登录页却还是老文案。
+
+**机制。** 前端取文案的优先级（`frontend/discourse/app/models/login-method.js`）：
+
+```js
+get title()      { return this.title_override      || i18n(`login.${this.name}.title`); }
+get prettyName() { return this.pretty_name_override || i18n(`login.${this.name}.name`); }
+```
+
+`title_override` 由服务端序列化器算出
+（`app/serializers/auth_provider_serializer.rb`）：
+
+```ruby
+def title_override
+  object.title_setting ? SiteSetting.get(object.title_setting) : object.title
+end
+```
+
+而 `title_setting` **只能**由 `plugin.rb` 的 `auth_provider` 传入：
+
+```ruby
+auth_provider authenticator: DiscourseCnkdLogin::Authenticator.new,
+              title_setting: :cnkd_login_button_title
+```
+
+**所以**：不传 `title_setting` → `title_override` 恒为 `nil` → 前端永远回落到
+静态的 `i18n("login.cnkd.title")`，站点设置里怎么改都无效。
+本插件早期版本就是这状态（该设置只被 `Authenticator#display_name` 在服务端读取，
+从未下发前端），现已接线。
+
+**如果仍然不生效，按顺序查：**
+
+| 检查项 | 应满足 |
+| --- | --- |
+| `title_setting` | `plugin.rb` 的 `auth_provider` 里传了 `title_setting: :cnkd_login_button_title` |
+| 该设置的 `client` | 必须是 `true` —— 不下发到前端，`title_setting` 就取不到值 |
+| 设置值 | 非空。留空会回落到 i18n 文案（不会出现空白按钮） |
+| 是否重建 | 改 `client: true` 之类**代码级**改动需 `./launcher rebuild app`；只改设置**值**刷新页面即可 |
+
+> 不需要改 locale 文件的 `js.login.cnkd.title` 来改文案 —— 那是**回落值**，
+> 只有当站点设置为空时才使用。改站点设置才是正道。
+
+
 ### 7.5 后台出现「已弃用」警告横幅（`.hbs`）
 
 如果管理员看到类似这样的横幅：
@@ -580,6 +625,7 @@ python3 script/validate.py
 - `.gjs` 严格模式：组件必须已 import、禁止字符串 action、属性必须带 `this.`
 - 邮箱直通链路（scope → info → email_valid → `:after_auth` 钩子）四环齐全
 - 邮箱归属冲突前置拦截（`email_owner_conflict` 必须先于 `super`，且中英文案存在）
+- 登录按钮文案接线（`title_setting` 已传、指向的设置存在/默认非空/`client: true`）
 
 ## License
 

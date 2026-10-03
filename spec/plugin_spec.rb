@@ -538,6 +538,47 @@ RSpec.describe DiscourseCnkdLogin do
     end
   end
 
+  # ------------------------------------------------- 登录按钮文案可配置（title_setting）
+
+  # 前端 login-method.js：
+  #   get title() { return this.title_override || i18n(`login.${this.name}.title`); }
+  # 服务端 auth_provider_serializer.rb：
+  #   def title_override
+  #     object.title_setting ? SiteSetting.get(object.title_setting) : object.title
+  #   end
+  # 结论：不传 title_setting，title_override 恒为 nil，管理员改站点设置无效。
+  describe "登录按钮文案可通过站点设置修改" do
+    let(:plugin_source) { File.read(File.expand_path("../plugin.rb", __dir__)) }
+
+    # 用多行容忍 + 跳过注释的方式取 auth_provider 调用块
+    def auth_provider_call(source)
+      source[/^auth_provider\b(.*?)(?=^\S|\Z)/m, 0].to_s
+    end
+
+    it "auth_provider 传了 title_setting，指向 cnkd_login_button_title" do
+      call = auth_provider_call(plugin_source)
+      expect(call).to include("title_setting: :cnkd_login_button_title")
+    end
+
+    it "cnkd_login_button_title 存在、默认非空、且 client 可见" do
+      settings = YAML.safe_load(
+        File.read(File.expand_path("../config/settings.yml", __dir__)),
+        aliases: true,
+      )
+      entry = settings.dig("cnkd_login", "cnkd_login_button_title")
+
+      expect(entry).to be_present
+      expect(entry["default"].to_s).not_to be_empty
+      # 不下发到前端，title_setting 就取不到值
+      expect(entry["client"]).to eq(true)
+    end
+
+    # pretty_name 保持 i18n 即可（用于「已关联账号」的稳定短名）
+    it "不传 custom_url（会跳过 reconnect/signup 与回跳）" do
+      expect(auth_provider_call(plugin_source)).not_to include("custom_url")
+    end
+  end
+
   # ------------------------------------------------------- 启动体检（非死代码）
 
   describe "启动体检" do

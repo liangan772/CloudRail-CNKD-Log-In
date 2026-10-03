@@ -199,8 +199,33 @@ require_relative "lib/cnkd/authenticator"
 # 官方文档明确要求：必须早于 after_initialize 注册，否则 OmniAuth 中间件
 # 不会挂载。这里直接在文件顶层调用。
 #
-# 按钮文案走 i18n（config/locales/client.*.yml 的 js.login.cnkd.title），
-# 所以不需要 title / title_setting / pretty_name 选项。
+# ── 按钮文案从哪来（关键：title_setting 必须传） ──
+#
+# 前端 frontend/discourse/app/models/login-method.js 是这样取文案的：
+#     get title()      { return this.title_override      || i18n(`login.${this.name}.title`); }
+#     get prettyName() { return this.pretty_name_override || i18n(`login.${this.name}.name`); }
+#
+# 而 title_override / pretty_name_override 由服务端序列化器决定
+# （app/serializers/auth_provider_serializer.rb）：
+#     def title_override
+#       object.title_setting ? SiteSetting.get(object.title_setting) : object.title
+#     end
+#
+# 也就是说：
+#   · 不传 title_setting -> title_override 为 nil -> 前端回落到静态的
+#     i18n("login.cnkd.title")，**管理员在站点设置里改什么都不生效**。
+#   · 传了 title_setting -> 该站点的 SiteSetting 值会被下发，管理员可随时改。
+#
+# 这正是「登录页文案无法修改」的成因：cnkd_login_button_title 一直存在，
+# 但此前只被 Authenticator#display_name 读取（服务端用），从未接到前端。
+# 现在用 title_setting 把它接上，站点设置里改完刷新即生效。
+#
+# ⚠️ title_setting 指向的设置必须 client: true，否则不会下发到前端
+#    （cnkd_login_button_title 在 config/settings.yml 里已标记 client: true）。
+#
+# ⚠️ pretty_name 保持 i18n（js.login.cnkd.name）即可：它用于
+#    「已关联账号」等处的简短名称，属于不可本地化改动的稳定标识。
+#    若也要可改，再加 pretty_name_setting，但没必要。
 #
 # 关于 icon：Auth::AuthProvider.auth_attributes 只接受 authenticator /
 # custom_url / frame_height / frame_width / icon / icon_setting /
@@ -216,7 +241,8 @@ require_relative "lib/cnkd/authenticator"
 #   - 「已登录时关联新账号」失效
 #   - 按钮会跳到 /auth/cnkd/callback 而不是 /auth/cnkd，直接认证失败
 # 标准 OmniAuth provider 应交给默认流程走 POST /auth/cnkd。
-auth_provider authenticator: DiscourseCnkdLogin::Authenticator.new
+auth_provider authenticator: DiscourseCnkdLogin::Authenticator.new,
+              title_setting: :cnkd_login_button_title
 
 # 邮箱直通：让「服务商已返回的邮箱」真正顶用，用户不必再手工填写。
 #

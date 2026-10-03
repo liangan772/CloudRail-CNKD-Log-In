@@ -902,6 +902,91 @@ def check_email_conflict_locale():
     notes.append("email_already_taken 错误文案已在中英 locale 中登记")
 
 
+# ------------------------------------------- 登录按钮文案（title_setting 接线）
+
+def check_button_title_setting():
+    """守住「登录页按钮文案可在后台修改」这条接线。
+
+    背景（回看核心源码）：
+
+      · 前端 frontend/discourse/app/models/login-method.js：
+          get title() { return this.title_override || i18n(`login.${this.name}.title`); }
+        只有 title_override 为空时才回落到静态 i18n。
+
+      · 服务端 app/serializers/auth_provider_serializer.rb：
+          def title_override
+            object.title_setting ? SiteSetting.get(object.title_setting) : object.title
+          end
+
+      · 而 title_setting 只能由 plugin.rb 的 auth_provider 传入
+        （lib/plugin/instance.rb 的 auth_provider 只转发 auth_attributes 里的键）。
+
+    所以「不传 title_setting」= title_override 恒为 nil = 管理员在站点设置里
+    改 cnkd_login_button_title 毫无效果 —— 这正是「登录页文案无法修改」的成因。
+
+    三条缺一不可：
+      1. auth_provider 传了 title_setting: :cnkd_login_button_title；
+      2. 该设置存在且 default 不为空（空值会让前端回落到 i18n，行为不一致）；
+      3. 该设置必须 client: true —— 不下发到前端，title_setting 取不到值。
+    """
+    plugin = (ROOT / "plugin.rb").read_text(encoding="utf-8")
+
+    # ⚠️ 两个坑，都会造成假阴性：
+    #   1. 必须容忍换行 —— 真实写法是
+    #        auth_provider authenticator: ...,
+    #                      title_setting: :cnkd_login_button_title
+    #   2. 必须跳过注释 —— 注释里出现过 auth_provider_serializer.rb，
+    #      若用裸 auth_provider 匹配会先命中注释。
+    # 做法：只在**行首（无缩进的顶层调用）**匹配，且该行不能是注释。
+    call_m = re.search(
+        r"^auth_provider\b(.*?)(?=^\S|\Z)", plugin, re.DOTALL | re.MULTILINE
+    )
+    if not call_m:
+        return  # 没有注册认证提供方，跳过
+
+    call = call_m.group(1)
+
+    m = re.search(r"title_setting:\s*:(\w+)", call)
+    if not m:
+        fail(
+            "plugin.rb 的 auth_provider 没有传 title_setting —— "
+            "登录页按钮文案会回落到静态 i18n，管理员在站点设置里改不动"
+        )
+        return
+
+    setting = m.group(1)
+
+    settings = (ROOT / "config/settings.yml").read_text(encoding="utf-8")
+
+    # 2) 设置必须存在
+    block_m = re.search(
+        rf"^  {re.escape(setting)}:\n((?:    .*\n)*)", settings, re.MULTILINE
+    )
+    if not block_m:
+        fail(f"title_setting 指向的 {setting} 在 settings.yml 里不存在")
+        return
+
+    block = block_m.group(1)
+
+    # 2b) default 必须非空（空值会让前端回落到 i18n，与「可配置」的预期不符）
+    default_m = re.search(r"default:\s*(.*)", block)
+    if default_m and default_m.group(1).strip() in ('""', "''"):
+        fail(
+            f"{setting} 的 default 为空 —— 前端会回落到静态 i18n 文案，"
+            f"建议给一个非空默认值，保证行为一致"
+        )
+
+    # 3) 必须 client: true
+    if not re.search(r"client:\s*true", block):
+        fail(
+            f"{setting} 没有 client: true —— 该设置不会下发到前端，"
+            f"title_override 取不到值，登录页文案改不动"
+        )
+        return
+
+    notes.append(f"登录按钮文案已接线（title_setting -> {setting}，client 可见）")
+
+
 # ------------------------------------------------------ 插件目录名
 def check_plugin_directory_name():
     """插件目录名必须与 plugin.rb 的 `# name:` 一致。
@@ -956,6 +1041,7 @@ def main():
     check_email_passthrough()
     check_email_ownership_guard()
     check_email_conflict_locale()
+    check_button_title_setting()
     client_keys, server_keys = check_locale_symmetry()
     check_referenced_keys(client_keys, server_keys)
     check_template_keys(client_keys)

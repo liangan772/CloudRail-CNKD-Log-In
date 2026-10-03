@@ -6,7 +6,7 @@ en:
     cnkd_login_client_type: "Application type. public apps are forced to S256 PKCE and carry no secret; confidential apps require a secret."
     cnkd_login_enable_pkce: "Enable PKCE (S256). Mandatory and cannot be disabled for public apps."
     cnkd_login_site_url: "CNKD site root. Production is https://cloud.cnkd.fun; change it for private deployments or staging."
-    cnkd_login_button_title: "Label shown on the login button."
+    cnkd_login_button_title: "Label shown on the login page button. Changes apply after refreshing the login page; leave blank to fall back to the built-in localized default."
     cnkd_login_scope_email: "Request the email.address scope so CNKD returns the email address itself, sparing users from typing it at sign-up. CNKD must enable this scope for your application (once enabled it works for any owner type). Turning it on without the scope being granted makes authorisation fail, so leave it off until confirmed."
     cnkd_login_auto_fill_email: "Mark the verified email returned by CNKD as trusted, so Discourse pre-fills and locks the email field on the sign-up form instead of asking the user to type it. It also activates the new account straight away and rejects any posted email that does not match CNKD's. If the email already belongs to another account on this site, the user is told to use that account instead of seeing a raw validation error."
     cnkd_login_request_email_verified: "Request the email.verified scope (boolean only, never the address). CNKD-internal apps only; rejected for partner apps."

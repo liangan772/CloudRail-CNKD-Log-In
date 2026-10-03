@@ -6,7 +6,7 @@ zh_CN:
     cnkd_login_client_type: "应用类型。public 应用由平台强制 S256 PKCE 且不传密钥；confidential 应用必须配置密钥。"
     cnkd_login_enable_pkce: "启用 PKCE（S256）。public 应用强制开启且不可关闭。"
     cnkd_login_site_url: "CNKD 站点根地址。生产环境为 https://cloud.cnkd.fun，私有化部署或联调时改写。"
-    cnkd_login_button_title: "登录页按钮显示的文案。"
+    cnkd_login_button_title: "登录页按钮显示的文案。改完刷新登录页即生效；留空则回落到内置的多语言默认文案。"
     cnkd_login_scope_email: "申请 email.address 范围，由 CNKD 直接返回邮箱明文，用户注册时不必手工填写。需平台为你的应用开通该范围（开通后即可用，不限应用归属类型）。未开通时开启会导致授权被拒，请保持关闭。"
     cnkd_login_auto_fill_email: "把 CNKD 返回的已验证邮箱标记为可信：注册页的邮箱输入框会预填并锁定，用户不必手工输入；建号后直接激活，且提交的邮箱必须与 CNKD 返回的一致。若该邮箱已属于本站另一个账号，会提示改用原账号登录（不会抛出原始校验错误）。"
     cnkd_login_request_email_verified: "申请 email.verified 范围（仅返回布尔值，不含邮箱原文）。仅 CNKD 自有应用可申请，外部合作方开启会被平台拒绝。"

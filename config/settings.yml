@@ -35,6 +35,15 @@ cnkd_login:
     client: true
 
   # ---- 界面 ----
+  #
+  # 登录页按钮文案。通过 plugin.rb 的
+  #     auth_provider ..., title_setting: :cnkd_login_button_title
+  # 下发到前端（AuthProviderSerializer#title_override 会读 SiteSetting.get）。
+  #
+  # ⚠️ 必须保持 client: true —— title_setting 指向的设置不下发到前端就取不到值，
+  #    前端会回落到静态 i18n（js.login.cnkd.title），表现为「改了不生效」。
+  #
+  # 留空时前端会自动回落到 i18n 文案，不会出现空白按钮。
   cnkd_login_button_title:
     default: "CNKD 一证通行"
     client: true
